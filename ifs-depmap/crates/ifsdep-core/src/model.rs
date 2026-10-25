@@ -279,6 +279,9 @@ pub struct Finding {
     pub involves_cust: bool,
     /// Upgrade findings: what changed in the Core declaration since the previous Core.
     pub diff: Option<Diff>,
+    /// Caused by the upgrade (only with a previous Core): something changed under a Cust
+    /// customization, or a conflict appears because IFS changed the code involved.
+    pub upgrade: bool,
 }
 
 /// One declaration before (in the previous Core) and now.

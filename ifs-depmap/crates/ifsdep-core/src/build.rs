@@ -938,6 +938,7 @@ fn unresolved_finding(idx: &Index, file: usize, line: usize, what: &str, name: &
         }),
         evidence: vec![],
         diff: None,
+        upgrade: false,
         involves_cust: false,
     }
 }

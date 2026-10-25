@@ -1,0 +1,53 @@
+-----------------------------------------------------------------------------
+--  Logical unit: ShopOrderHandling
+--  Component:    SHPORD
+-----------------------------------------------------------------------------
+layer Core;
+
+FUNCTION Get_Default_Site___ RETURN VARCHAR2
+IS
+BEGIN
+   RETURN User_Allowed_Site_API.Get_Default_Site;
+END Get_Default_Site___;
+
+PROCEDURE Release_Order___ (
+   order_no_ IN VARCHAR2 )
+IS
+BEGIN
+   Shop_Order_API.Release__(order_no_);
+END Release_Order___;
+
+FUNCTION Get_Late_K_P_I___ RETURN NUMBER
+IS
+   CURSOR get_late IS
+      WITH late_orders AS (SELECT order_no FROM shop_order_k_p_i_tab WHERE late = 'TRUE')
+      SELECT COUNT(*) FROM late_orders;
+   n_ NUMBER;
+BEGIN
+   OPEN get_late;
+   FETCH get_late INTO n_;
+   CLOSE get_late;
+   RETURN n_;
+END Get_Late_K_P_I___;
+
+FUNCTION Get_Top_Priority___ (
+   order_no_ IN VARCHAR2 ) RETURN NUMBER
+IS
+   -- Only SHOP_ORDER_LINE has PRIORITY in Core, so the unprefixed name compiles. The Cust
+   -- attribute ShopOrder.Priority gives SHOP_ORD one too.
+   CURSOR get_lines IS
+      SELECT sol.line_no, priority
+      FROM   shop_order_line sol
+      WHERE  sol.order_no = order_no_;
+   -- Prefixed, or one relation only: not ambiguous.
+   CURSOR get_prefixed IS
+      SELECT MAX(sol.priority) FROM shop_ord so, shop_order_line sol WHERE so.order_no = sol.order_no;
+   CURSOR get_single IS
+      SELECT priority FROM shop_ord WHERE order_no = order_no_;
+   n_ NUMBER;
+BEGIN
+   FOR rec_ IN get_lines LOOP
+      n_ := GREATEST(NVL(n_, 0), rec_.priority);
+   END LOOP;
+   RETURN n_;
+END Get_Top_Priority___;

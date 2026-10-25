@@ -98,6 +98,8 @@ interface Finding {
   involves_cust: boolean;
   /** Upgrade findings: the Core declaration before (previous Core) and now. */
   diff: Diff | null;
+  /** Caused by the upgrade (with a previous Core): a change under a customization, or a conflict IFS's change brings. */
+  upgrade: boolean;
 }
 
 interface Diff {

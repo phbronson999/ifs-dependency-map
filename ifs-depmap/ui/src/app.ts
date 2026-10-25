@@ -202,8 +202,8 @@ function renderEmpty() {
   }</p></div>`;
 }
 
-/** Findings from the upgrade comparison (with a previous Core). */
-const isUpgrade = (f: Finding) => f.rule === "BASE_CHANGED" || f.rule === "ENTITY_CHANGED";
+/** Findings the upgrade causes (only with a previous Core). */
+const isUpgrade = (f: Finding) => f.upgrade;
 
 function renderFindings() {
   const m = ui.model;
@@ -219,10 +219,13 @@ function renderFindings() {
       .join("") +
     `<button class="sev-chip scope" data-scope aria-pressed="${ui.showCore}" title="Findings that involve only Core files. Core can't be changed and compiles as delivered, so these are hidden unless you turn them on."><span class="pill core">Core</span>only <b>${coreOnly.toLocaleString()}</b></button>` +
     (upgrades
-      ? `<button class="sev-chip scope" data-upgrade aria-pressed="${ui.upgradeOnly}" title="Only what changed under your customizations since the previous Core"><span class="pill prev">Upgrade</span>only <b>${upgrades.toLocaleString()}</b></button>`
+      ? `<button class="sev-chip scope" data-upgrade aria-pressed="${ui.upgradeOnly}" title="Only what the upgrade causes: what IFS changed under your customizations since the previous Core, and conflicts that IFS's changes bring (like a column your Cust layer adds becoming ambiguous in a query IFS changed)"><span class="pill prev">Upgrade</span>only <b>${upgrades.toLocaleString()}</b></button>`
       : "");
   const list = m.findings.filter((f) => ui.sev.has(f.severity) && (!ui.upgradeOnly || !upgrades || isUpgrade(f)));
-  $("finding-list").innerHTML = list.length
+  const banner = ui.upgradeOnly && upgrades
+    ? `<li class="list-note">Caused by the upgrade: what IFS changed under your customizations since the previous Core, and conflicts its changes bring. Other findings are hidden.</li>`
+    : "";
+  $("finding-list").innerHTML = banner + (list.length
     ? list
         .map((f) => {
           const loc = f.location ? m.file(f.location.file) : null;
@@ -235,7 +238,7 @@ function renderFindings() {
         !m.idx.findings.length ? "No problems found."
         : !m.findings.length ? "No findings involve Cust files. Findings about Core alone are hidden."
         : "Nothing matches the filter."
-      }</li>`;
+      }</li>`);
 }
 
 function renderToolbar() {

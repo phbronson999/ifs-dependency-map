@@ -412,3 +412,4 @@ marker.m-sel path { fill: var(--accent); }
 .diff td.y .yes { color: var(--add); }
 .diff td.y .no { color: var(--error); }
 .cust-code { margin: 6px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; background: var(--cust-soft); border: 1px solid var(--line); border-left: 3px solid var(--cust); border-radius: var(--r); font: 11.5px/1.5 var(--font-mono); white-space: pre; }
+.list-note { padding: 8px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--surface); }

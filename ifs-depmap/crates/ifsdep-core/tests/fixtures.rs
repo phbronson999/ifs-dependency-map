@@ -521,6 +521,21 @@ fn upgrade_comparison_says_what_changed_under_each_customization() {
     let e = by_title("ShopOrder changed under");
     assert!(e.message.contains("Removed: OrderStatus"), "{}", e.message);
     assert!(idx.notes.iter().any(|n| n.starts_with("Upgrade comparison with")));
-    // Without a previous Core there are no upgrade findings.
-    assert!(fixtures().findings.iter().all(|f| f.rule != "BASE_CHANGED" && f.rule != "ENTITY_CHANGED"));
+    // The comparison's own findings are all caused by the upgrade.
+    assert!(idx.findings.iter().filter(|f| f.rule == "BASE_CHANGED" || f.rule == "ENTITY_CHANGED").all(|f| f.upgrade));
+
+    // The ambiguous `priority` is caused by the upgrade too: before, the cursor read only
+    // SHOP_ORDER_LINE; IFS added SHOP_ORD, which has the Cust column. The diff shows that.
+    let c = findings(&idx, "COLUMN_AMBIGUOUS")[0];
+    assert!(c.upgrade);
+    assert!(c.message.ends_with("in the previous Core this query didn't read SHOP_ORD; IFS added it."), "{}", c.message);
+    let d = c.diff.as_ref().unwrap();
+    assert!(d.lines.iter().any(|l| l.op == "-" && l.text.trim() == "FROM   shop_order_line sol"));
+    assert!(d.lines.iter().any(|l| l.op == "+" && l.text.trim() == "FROM   shop_ord so, shop_order_line sol"));
+    assert_eq!(idx.files[d.cust_file.unwrap()].rel_path.rsplit('/').next(), Some("ShopOrder-Cust.entity"));
+    assert_eq!(d.cust_code, ["<NAME>Priority</NAME>"]);
+
+    // Without a previous Core nothing is marked as caused by the upgrade.
+    let plain = fixtures();
+    assert!(plain.findings.iter().all(|f| f.rule != "BASE_CHANGED" && f.rule != "ENTITY_CHANGED" && !f.upgrade));
 }

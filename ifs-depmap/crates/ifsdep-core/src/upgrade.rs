@@ -15,6 +15,7 @@ use crate::db;
 use crate::entity;
 use crate::model::*;
 use crate::plsql;
+use crate::sqlscope;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -280,11 +281,64 @@ pub fn run(idx: &Index, prev: &Path, out: &mut Vec<Finding>, notes: &mut Vec<Str
         });
         out.push(f);
     }
+
+    // Column conflicts the upgrade brings: the query was fine before because IFS only now
+    // reads the relation with the Cust column there (or the query itself is new).
+    for f in out.iter_mut().filter(|f| f.rule == "COLUMN_AMBIGUOUS") {
+        let (Some(loc), [r, o, ..]) = (f.location.clone(), f.nodes.as_slice()) else { continue };
+        if !r.starts_with('r') || !o.starts_with('r') {
+            continue;
+        }
+        let (rel, other) = (idx.relations[id_index(r)].name.clone(), idx.relations[id_index(o)].name.clone());
+        let col = f.title.split('`').nth(1).unwrap_or("").to_ascii_uppercase();
+        let file = &idx.files[loc.file];
+        // Without the old file nothing is known: the previous Core may be a partial copy.
+        let Some(old_text) = read_prev(&file.rel_path) else { continue };
+        let now_text = read_now(loc.file);
+        let reads = |b: &sqlscope::Block, name: &str| b.from.iter().any(|i| i.name == name);
+        let Some(now) = query_span(&now_text, |b| reads(b, &rel) && reads(b, &other) && b.refs.iter().any(|(c, l)| *c == col && *l == loc.line)) else {
+            continue;
+        };
+        let old_reads_rel = query_span(&old_text, |b| reads(b, &other) && reads(b, &rel) && b.refs.iter().any(|(c, _)| *c == col)).is_some();
+        if old_reads_rel {
+            continue; // The same query, reading both, was there before the upgrade.
+        }
+        let old = query_span(&old_text, |b| reads(b, &other) && b.refs.iter().any(|(c, _)| *c == col));
+        let now_lines = lines(&now_text, now);
+        let (old_lines, old_start) = old.map_or((Vec::new(), 0), |s| (lines(&old_text, s), s.0));
+        let cust = f.evidence.first().and_then(|t| t.steps.first()).map(|s| (s.file, s.line, s.text.clone()));
+        f.upgrade = true;
+        f.message.push_str(&match old {
+            Some(_) => format!(" This is new with the upgrade: in the previous Core this query didn't read {rel}; IFS added it."),
+            None => " This is new with the upgrade: the query isn't in the previous Core.".to_string(),
+        });
+        f.diff = Some(Diff {
+            old_path: prev.join(&file.rel_path).display().to_string(),
+            old_line: old_start + 1,
+            new_file: loc.file,
+            new_line: now.0 + 1,
+            lines: diff(&old_lines, &now_lines, old_start, now.0),
+            cust_file: cust.as_ref().map(|c| c.0),
+            cust_line: cust.as_ref().map_or(1, |c| c.1),
+            cust_code: cust.map(|c| vec![c.2]).unwrap_or_default(),
+        });
+    }
     notes.push(format!(
         "Upgrade comparison with {}: {compared} Core base{} compared, {changed} changed, {no_prev} with no previous copy.",
         prev.display(),
         if compared == 1 { "" } else { "s" }
     ));
+}
+
+/// First and last line (0-based) of the statement holding the first query block that
+/// `pick` accepts: from its SELECT to the `;` after its FROM list.
+fn query_span(text: &str, pick: impl Fn(&sqlscope::Block) -> bool) -> Option<(usize, usize)> {
+    let prepared = sqlscope::prepare(text);
+    let b = sqlscope::blocks(&prepared).into_iter().find(|b| pick(b))?;
+    let from_end = b.from.iter().map(|f| f.line).max().unwrap_or(b.select_line);
+    let ls: Vec<&str> = prepared.lines().collect();
+    let end = (from_end - 1..ls.len()).find(|&i| ls[i].contains(';')).unwrap_or(ls.len() - 1);
+    Some((b.select_line - 1, end))
 }
 
 /// Longest customization shown in full; longer ones are cut with a note.
@@ -370,6 +424,7 @@ fn finding(severity: Severity, rule: &str, title: String, message: String) -> Fi
         evidence: vec![],
         involves_cust: true,
         diff: None,
+        upgrade: true,
     }
 }
 

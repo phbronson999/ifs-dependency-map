@@ -183,6 +183,7 @@ fn finding(severity: Severity, rule: &str, title: impl Into<String>, message: im
         suggestion: None,
         evidence: vec![],
         diff: None,
+        upgrade: false,
         involves_cust: false,
     }
 }
