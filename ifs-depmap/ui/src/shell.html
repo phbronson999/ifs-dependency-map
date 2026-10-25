@@ -34,6 +34,15 @@
         <button data-level="objects" aria-pressed="false">Objects</button>
       </div>
       <div class="crumbs" id="crumbs"></div>
+      <div class="selmode" id="selmode" role="group" aria-label="What selecting something does">
+        <span class="lbl">On select</span>
+        <button data-selmode="filter" aria-pressed="true" title="Show only the selection and what links to it. Select it again, or press Esc, to see everything.">Filter</button>
+        <button data-selmode="highlight" aria-pressed="false" title="Keep everything on screen; light up the selection and what links to it">Highlight</button>
+        <span class="sep" aria-hidden="true"></span>
+        <button data-depth="direct" aria-pressed="true" title="What links straight to or from the selection">Direct</button>
+        <button data-depth="chain" aria-pressed="false" title="Everything downstream of the selection (what it uses, all the way to tables) and everything upstream (what leads to it)">Full chain</button>
+      </div>
+      <div class="jump" id="jump" role="group" aria-label="Jump to a band" hidden></div>
     </div>
     <div class="notice" id="notice" hidden></div>
     <svg class="canvas" id="canvas" role="img" aria-label="Dependency graph">

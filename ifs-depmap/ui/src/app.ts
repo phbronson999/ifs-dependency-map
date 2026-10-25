@@ -25,6 +25,14 @@ const ui = {
   sev: new Set<Severity>(["error", "warning", "info"]),
   /** Show findings that involve only Core files. Off by default: Core can't be changed and compiles as delivered. */
   showCore: false,
+  /** Selecting something either filters the graph down to it and its links, or highlights them in place. */
+  selectMode: "filter" as "filter" | "highlight",
+  /** How far from a selected node to go: one link, or the whole chain up and down. */
+  depth: "direct" as "direct" | "chain",
+  /** The full graph's view, kept while filtered so leaving the filter returns to it. */
+  savedView: null as null | { key: string; view: { x: number; y: number; k: number } },
+  /** Identifies the current filtered view ("" when not filtered). */
+  filterKey: "",
   selected: null as null | { type: "finding" | "node"; id: string },
   view: { x: 0, y: 0, k: 1 },
   graph: null as Graph | null,
@@ -65,6 +73,8 @@ function boot() {
     const saved = JSON.parse(localStorage.getItem("ifsdepmap.panels") ?? "null");
     if (saved) { panels.left = saved.left !== false; panels.right = saved.right !== false; }
     ui.showCore = localStorage.getItem("ifsdepmap.showCore") === "true";
+    if (localStorage.getItem("ifsdepmap.selectMode") === "highlight") ui.selectMode = "highlight";
+    if (localStorage.getItem("ifsdepmap.depth") === "chain") ui.depth = "chain";
   } catch { /* storage unavailable */ }
   applyPanels();
   bindEvents();
@@ -191,6 +201,9 @@ function renderFindings() {
 function renderToolbar() {
   const m = ui.model;
   for (const b of $("levels").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.level === ui.level));
+  for (const b of $("selmode").querySelectorAll<HTMLElement>("button")) {
+    b.setAttribute("aria-pressed", String(b.dataset.selmode ? b.dataset.selmode === ui.selectMode : b.dataset.depth === ui.depth));
+  }
   const crumbs: string[] = [`<button data-crumb="components">All components</button>`];
   if (m && ui.level !== "components") {
     if (ui.components.size) {
@@ -266,10 +279,30 @@ function highlight(g: Graph) {
   } else if (ui.selected?.type === "node" && nodeIds.has(ui.selected.id)) {
     selNode = ui.selected.id;
     lit.add(selNode);
-    for (const e of g.edges) {
-      if (e.from === selNode || e.to === selNode) {
-        selEdges.add(e.key);
-        lit.add(e.from).add(e.to);
+    if (ui.depth === "chain") {
+      // Downstream along outgoing links and upstream along incoming ones, each all the way,
+      // without turning around (which would spread into unrelated branches).
+      const out = new Map<string, GEdge[]>(), inc = new Map<string, GEdge[]>();
+      for (const e of g.edges) { push(out, e.from, e); push(inc, e.to, e); }
+      const walk = (links: Map<string, GEdge[]>, next: (e: GEdge) => string) => {
+        const queue = [selNode!], seen = new Set(queue);
+        for (let i = 0; i < queue.length; i++) {
+          for (const e of links.get(queue[i]) ?? []) {
+            selEdges.add(e.key);
+            const n = next(e);
+            lit.add(n);
+            if (!seen.has(n)) { seen.add(n); queue.push(n); }
+          }
+        }
+      };
+      walk(out, (e) => e.to);
+      walk(inc, (e) => e.from);
+    } else {
+      for (const e of g.edges) {
+        if (e.from === selNode || e.to === selNode) {
+          selEdges.add(e.key);
+          lit.add(e.from).add(e.to);
+        }
       }
     }
   }
@@ -303,8 +336,22 @@ function renderGraph(fit = false) {
   const m = ui.model;
   const vp = $("viewport");
   if (!m) { vp.innerHTML = ""; return; }
-  const g = buildGraph();
-  ui.graph = g;
+  const full = buildGraph();
+  ui.graph = full;
+  const h = highlight(full);
+  // Filter mode: draw only the selection and what links to it.
+  const filtering = ui.selectMode === "filter" && h.dim;
+  const g: Graph = filtering
+    ? {
+        nodes: full.nodes.filter((n) => h.lit.has(n.id)),
+        edges: full.edges.filter((e) => h.hotEdges.has(e.key) || h.selEdges.has(e.key)),
+        truncated: 0,
+      }
+    : full;
+  const filterKey = filtering ? `${graphKey()}#${ui.selected!.type}:${ui.selected!.id}` : "";
+  const prevPlaced = ui.placed, prevKey = ui.filterKey;
+  // Keep the full view to return to, unless this render also changes the graph (then fit on the way back).
+  if (filterKey && !prevKey) ui.savedView = fit ? null : { key: graphKey(), view: { ...ui.view } };
   const banded = ui.level === "objects";
   const placed = layoutLayered(
     g.nodes.map((n) => ({ id: n.id, w: nodeWidth(n), h: 52 })),
@@ -317,13 +364,45 @@ function renderGraph(fit = false) {
     },
   );
   ui.placed = placed;
-  const h = highlight(g);
+
+  // Where to look. Entering or moving within the filter keeps the selected node where it was
+  // on screen (so a double tap still lands on it), then fits the related items if some are
+  // off screen. Leaving the filter returns to the view from before it.
+  let viewSet = false;
+  if (filterKey !== prevKey && !fit) {
+    if (!filterKey) {
+      if (ui.savedView?.key === graphKey()) { ui.view = { ...ui.savedView.view }; applyView(); viewSet = true; }
+      else fit = true;
+      ui.savedView = null;
+    } else {
+      const id = ui.selected!.id;
+      const before = prevPlaced?.get(id), after = placed.get(id);
+      if (before && after) {
+        const v = ui.view;
+        ui.view = { k: v.k, x: v.x + (before.x - after.x) * v.k, y: v.y + (before.y - after.y) * v.k };
+        applyView();
+        viewSet = true;
+        window.setTimeout(() => { if (ui.filterKey === filterKey && !allVisible()) fitView(undefined, true); }, 420);
+      } else fit = true;
+    }
+  }
+  ui.filterKey = filterKey;
 
   const notice = $("notice");
-  if (g.truncated) {
+  notice.style.top = `${(document.querySelector<HTMLElement>(".graph-toolbar")?.offsetHeight ?? 34) + 16}px`;
+  if (filtering) {
     notice.hidden = false;
-    notice.textContent = `Showing ${g.nodes.length} of ${g.nodes.length + g.truncated}. Narrow it down with a component, a kind filter, or search.`;
+    const what = ui.selected!.type === "finding"
+      ? "this finding"
+      : full.nodes.find((n) => n.id === ui.selected!.id)?.label ?? "the selection";
+    notice.className = "notice info";
+    notice.textContent = `Showing ${g.nodes.length} item${g.nodes.length === 1 ? "" : "s"} ${ui.depth === "chain" && ui.selected!.type === "node" ? "in the chain through" : "linked to"} ${what}. Select it again or press Esc to see everything.`;
+  } else if (full.truncated) {
+    notice.hidden = false;
+    notice.className = "notice";
+    notice.textContent = `Showing ${full.nodes.length} of ${full.nodes.length + full.truncated}. Narrow it down with a component, a kind filter, or search.`;
   } else if (!g.nodes.length) {
+    notice.className = "notice";
     notice.hidden = false;
     notice.textContent = ui.level === "objects" ? "Pick a file first: double-tap one in the Files view, or search for it." : "Nothing to show with these filters.";
   } else notice.hidden = true;
@@ -356,9 +435,53 @@ function renderGraph(fit = false) {
     }</g>`;
   }
   vp.innerHTML = `${banded ? bandsSvg(g, placed) : ""}<g class="edges">${edgesSvg}</g><g class="nodes">${nodesSvg}</g>`;
-  $("canvas").classList.toggle("dimmed", h.dim);
+  $("canvas").classList.toggle("dimmed", h.dim && !filtering);
+  renderJump(banded ? g : null);
   if (fit) fitView();
-  else applyView();
+  else if (!viewSet) applyView();
+}
+
+/** What the graph currently shows, apart from the selection. */
+function graphKey() {
+  return [ui.level, [...ui.components].join(","), [...ui.focus].join(","), [...ui.objUnits].join(",")].join("|");
+}
+
+/** The Objects view's bands that are on screen, as buttons that zoom to each (and to its override row). */
+function renderJump(g: Graph | null) {
+  const el = $("jump");
+  const tiers = new Map<number, { all: number; over: number }>();
+  for (const n of g?.nodes ?? []) {
+    const t = tiers.get(n.tier!) ?? { all: 0, over: 0 };
+    t.all++;
+    if (n.override) t.over++;
+    tiers.set(n.tier!, t);
+  }
+  el.hidden = tiers.size < 2;
+  if (el.hidden) { el.innerHTML = ""; return; }
+  el.innerHTML = `<span class="lbl">Jump to</span>${[...tiers.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([tier, t]) =>
+      `<button class="chip" data-jump="${tier}" title="${esc(OBJECT_TIERS[tier].hint)}">${esc(OBJECT_TIERS[tier].label)} <b>${t.all}</b></button>${
+        t.over && t.over < t.all ? `<button class="chip sub" data-jump="${tier}o" title="The overrides in this band, on the row above their bases">@Override <b>${t.over}</b></button>` : ""
+      }`)
+    .join("")}`;
+}
+
+/** Zooms to one band ("3") or to the override row of a band ("3o"). */
+function jumpTo(key: string) {
+  const g = ui.graph;
+  if (!g) return;
+  const tier = parseInt(key, 10), overOnly = key.endsWith("o");
+  const ids = new Set(g.nodes.filter((n) => n.tier === tier && (!overOnly || n.override) && ui.placed?.has(n.id)).map((n) => n.id));
+  if (ids.size) fitView(ids, true);
+}
+
+function deselect() {
+  if (!ui.selected) return;
+  ui.selected = null;
+  renderFindings();
+  renderGraph();
+  renderDetails();
 }
 
 /** Labelled horizontal bands behind the Objects view, one per OBJECT_TIERS entry present. */
@@ -383,33 +506,71 @@ function bandsSvg(g: Graph, placed: Map<string, Placed>) {
     const top = t.top - 36, bottom = t.bottom + 14;
     out += `<g class="band${i % 2 ? " alt" : ""}"><rect x="${x0}" y="${top}" width="${x1 - x0}" height="${bottom - top}"/>
 <line x1="${x0}" x2="${x1}" y1="${top}" y2="${top}"/>
-<text class="bl" x="${x0 + 12}" y="${top + 17}">${esc(info.label.toUpperCase())}</text>
+<text class="bl" data-band="${tier}" x="${x0 + 12}" y="${top + 17}"><title>Zoom to ${esc(info.label)}</title>${esc(info.label.toUpperCase())}</text>
 <text class="bh" x="${x0 + 14 + info.label.length * 8.2}" y="${top + 17}">${esc(info.hint)}</text>`;
     if (t.overBottom > -Infinity && t.baseTop < Infinity) {
       // Divider between the override row and the base row it layers over.
       const y = (t.overBottom + t.baseTop) / 2;
-      out += `<line class="split" x1="${x0 + 12}" x2="${x1 - 12}" y1="${y}" y2="${y}"/><text class="sl" x="${x0 + 12}" y="${y - 6}">@Override ↓ base</text>`;
+      out += `<line class="split" x1="${x0 + 12}" x2="${x1 - 12}" y1="${y}" y2="${y}"/><text class="sl" data-band="${tier}o" x="${x0 + 12}" y="${y - 6}"><title>Zoom to the overrides in ${esc(info.label)}</title>@Override ↓ base</text>`;
     }
     out += `</g>`;
   });
   return `<g class="bands">${out}</g>`;
 }
 
-function fitView() {
-  const placed = ui.placed;
+/** The part of the canvas not covered by the toolbar above and the filter bar below. */
+function clearArea() {
   const svg = $("canvas") as unknown as SVGSVGElement;
   const W = svg.clientWidth || 800, H = svg.clientHeight || 600;
+  const top = (document.querySelector<HTMLElement>(".graph-toolbar")?.offsetHeight ?? 40) + 18;
+  const bottom = ($("filters").offsetHeight || 40) + 20;
+  return { W, H, top, availH: Math.max(120, H - top - bottom) };
+}
+
+/** Fits everything drawn, or just `ids`, into view; `animate` glides there instead of jumping. */
+function fitView(ids?: Set<string>, animate = false) {
+  const placed = ui.placed;
+  const { W, H, top, availH } = clearArea();
   if (!placed || !placed.size) { ui.view = { x: W / 2, y: H / 2, k: 1 }; applyView(); return; }
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const p of placed.values()) {
+  for (const [id, p] of placed) {
+    if (ids && !ids.has(id)) continue;
     x0 = Math.min(x0, p.x - p.w / 2 - 30); x1 = Math.max(x1, p.x + p.w / 2 + 40);
     y0 = Math.min(y0, p.y - p.h / 2 - 50); y1 = Math.max(y1, p.y + p.h / 2);
   }
-  const top = 58, bottom = W < 700 ? 64 : 96; // clear the toolbar and filter bar
-  const availH = Math.max(120, H - top - bottom);
+  if (x0 === Infinity) return;
   const k = Math.min((W - 32) / (x1 - x0), availH / (y1 - y0), 1.3);
-  ui.view = { k, x: W / 2 - ((x0 + x1) / 2) * k, y: top + availH / 2 - ((y0 + y1) / 2) * k };
-  applyView();
+  const target = { k, x: W / 2 - ((x0 + x1) / 2) * k, y: top + availH / 2 - ((y0 + y1) / 2) * k };
+  if (animate) animateView(target);
+  else { ui.view = target; applyView(); }
+}
+
+/** True when every drawn node is inside the clear area of the canvas. */
+function allVisible() {
+  const { W, top, availH } = clearArea();
+  const v = ui.view;
+  for (const p of ui.placed?.values() ?? []) {
+    const x = p.x * v.k + v.x, y = p.y * v.k + v.y, hw = (p.w / 2) * v.k, hh = (p.h / 2) * v.k;
+    if (x - hw < 0 || x + hw > W || y - hh < top || y + hh > top + availH) return false;
+  }
+  return true;
+}
+
+let viewAnimation = 0;
+/** Glides from the current view to `target` (about a quarter of a second). */
+function animateView(target: { x: number; y: number; k: number }) {
+  const from = { ...ui.view };
+  const run = ++viewAnimation;
+  const t0 = performance.now();
+  const step = (now: number) => {
+    if (run !== viewAnimation) return;
+    const t = Math.min(1, (now - t0) / 260);
+    const e = 1 - Math.pow(1 - t, 3);
+    ui.view = { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e, k: from.k + (target.k - from.k) * e };
+    applyView();
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 function applyView() {
@@ -418,6 +579,7 @@ function applyView() {
 }
 
 function zoomAt(factor: number, px: number, py: number) {
+  viewAnimation++;
   const v = ui.view;
   const k = Math.min(3, Math.max(0.08, v.k * factor));
   v.x = px - (px - v.x) * (k / v.k);
@@ -630,6 +792,8 @@ function selectFinding(id: string) {
   const m = ui.model!;
   const f = m.idx.findings.find((x) => x.id === id);
   if (!f) return;
+  // Selecting the same finding again returns to the normal view.
+  if (ui.selected?.type === "finding" && ui.selected.id === id) { deselect(); return; }
   ui.selected = { type: "finding", id };
   const units = new Set<string>();
   for (const n of f.nodes) { const u = m.unitOf(n); if (u) units.add(u); }
@@ -780,6 +944,24 @@ function bindEvents() {
       renderFindings();
       return;
     }
+    const mode = t.closest<HTMLElement>("[data-selmode]");
+    if (mode) {
+      ui.selectMode = mode.dataset.selmode as "filter" | "highlight";
+      try { localStorage.setItem("ifsdepmap.selectMode", ui.selectMode); } catch { /* storage unavailable */ }
+      renderToolbar();
+      renderGraph();
+      return;
+    }
+    const depth = t.closest<HTMLElement>("[data-depth]");
+    if (depth) {
+      ui.depth = depth.dataset.depth as "direct" | "chain";
+      try { localStorage.setItem("ifsdepmap.depth", ui.depth); } catch { /* storage unavailable */ }
+      renderToolbar();
+      renderGraph();
+      return;
+    }
+    const jump = t.closest<HTMLElement>("[data-jump]");
+    if (jump) { jumpTo(jump.dataset.jump!); return; }
     if (t.closest("[data-scope]")) {
       ui.showCore = !ui.showCore;
       try { localStorage.setItem("ifsdepmap.showCore", String(ui.showCore)); } catch { /* storage unavailable */ }
@@ -828,7 +1010,7 @@ function bindEvents() {
     const z = t.closest<HTMLElement>("[data-zoom]");
     if (z) {
       const svg = $("canvas");
-      if (z.dataset.zoom === "fit") fitView();
+      if (z.dataset.zoom === "fit") fitView(undefined, true);
       else zoomAt(z.dataset.zoom === "in" ? 1.25 : 0.8, svg.clientWidth / 2, svg.clientHeight / 2);
       return;
     }
@@ -837,6 +1019,11 @@ function bindEvents() {
 
   // VS Code shortcuts: Ctrl/Cmd+B toggles the left panel, Ctrl/Cmd+Alt+B the right one.
   document.addEventListener("keydown", (e) => {
+    // Esc outside a text field clears the selection (and so leaves the filtered view).
+    if (e.key === "Escape" && !(e.target as Element).closest?.("input, textarea") && ui.selected) {
+      deselect();
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.code !== "KeyB") return;
     e.preventDefault();
     togglePanel(e.altKey ? "right" : "left");
@@ -874,7 +1061,7 @@ function bindEvents() {
   // Pan, pinch and tap on the canvas.
   const svg = $("canvas");
   const pointers = new Map<number, { x: number; y: number }>();
-  let start: { x: number; y: number; vx: number; vy: number; node: string | null; moved: boolean } | null = null;
+  let start: { x: number; y: number; vx: number; vy: number; node: string | null; band: string | null; moved: boolean } | null = null;
   let pinch: { d: number; k: number } | null = null;
   const local = (e: PointerEvent) => { const r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   svg.addEventListener("pointerdown", (e) => {
@@ -882,7 +1069,9 @@ function bindEvents() {
     pointers.set(e.pointerId, local(e));
     if (pointers.size === 1) {
       const node = (e.target as Element).closest?.("[data-node]")?.getAttribute("data-node") ?? null;
-      start = { ...local(e), vx: ui.view.x, vy: ui.view.y, node, moved: false };
+      const band = (e.target as Element).closest?.("[data-band]")?.getAttribute("data-band") ?? null;
+      viewAnimation++; // a drag or tap takes over from a glide in progress
+      start = { ...local(e), vx: ui.view.x, vy: ui.view.y, node, band, moved: false };
     } else if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), k: ui.view.k };
@@ -918,6 +1107,10 @@ function bindEvents() {
         if (lastTap.id === start.node && now - lastTap.t < 380) {
           drill(start.node);
           lastTap = { id: "", t: 0 };
+        } else if (ui.selected?.type === "node" && ui.selected.id === start.node) {
+          // Selecting the same item again returns to the normal view.
+          lastTap = { id: start.node, t: now };
+          deselect();
         } else {
           ui.selected = { type: "node", id: start.node };
           lastTap = { id: start.node, t: now };
@@ -925,11 +1118,10 @@ function bindEvents() {
           renderGraph();
           renderDetails();
         }
+      } else if (start.band) {
+        jumpTo(start.band);
       } else if (ui.selected) {
-        ui.selected = null;
-        renderFindings();
-        renderGraph();
-        renderDetails();
+        deselect();
       }
     }
     start = null;

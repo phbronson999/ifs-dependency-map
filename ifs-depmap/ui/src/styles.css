@@ -361,3 +361,20 @@ marker.m-sel path { fill: var(--accent); }
 .step.assumed::before { border-color: var(--warn); color: var(--warn); }
 .step .note { margin: 4px 0 0; padding: 4px 8px; border-radius: var(--r); background: var(--warn-soft); color: var(--warn); font-size: 12px; }
 .sev-chip.scope .pill { padding: 0 6px; }
+
+/* Selection mode switch and band jumps in the graph toolbar. */
+.selmode, .jump {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px; background: var(--raised);
+  border: 1px solid var(--line); border-radius: var(--r); font-size: 12px;
+}
+.selmode .lbl, .jump .lbl { font: 600 10px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 0 4px; }
+.selmode button { border: 1px solid transparent; background: none; padding: 2px 8px; border-radius: 4px; cursor: pointer; }
+.selmode button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.jump { flex-wrap: wrap; max-width: 100%; }
+.jump .chip b, .sev-chip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.jump .chip b { color: var(--muted); }
+.jump .chip.sub { color: var(--cust); }
+.band text.bl, .band text.sl { cursor: zoom-in; }
+.band text.bl:hover, .band text.sl:hover { text-decoration: underline; }
+.notice.info { background: var(--accent-soft); border-color: var(--accent); }
+.selmode .sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
