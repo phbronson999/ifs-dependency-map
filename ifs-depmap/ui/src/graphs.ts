@@ -44,6 +44,16 @@ const COMPONENT_TIERS: Tier[] = [
   { label: "Core", hint: "Core only, not touched by Cust" },
 ];
 
+/** Files view bands, one per file type, in the order a request flows through them. */
+const UNIT_TIERS: Tier[] = [
+  { label: "Clients", hint: ".client pages" },
+  { label: "Projections", hint: ".projection services the clients use" },
+  { label: "Fragments", hint: ".fragment files that clients and projections include" },
+  { label: "Service", hint: ".plsvc implementations of projections" },
+  { label: "PL/SQL", hint: ".plsql packages (Xxx_API)" },
+];
+const UNIT_TIER: Record<UnitKind, number> = { client: 0, projection: 1, fragment: 2, plsvc: 3, package: 4 };
+
 const UNIT_EXT: Record<UnitKind, string> = {
   client: ".client", projection: ".projection", fragment: ".fragment", plsvc: ".plsvc", package: ".plsql",
 };
@@ -268,7 +278,21 @@ function unitsGraph(
     ids = ids.slice(0, MAX_NODES);
   }
   const shown = new Set(ids);
-  const nodes = ids.map((id) => unitNode(m, m.unit(id)));
+  // Banded by file type; within a band, one box per component.
+  const groups = new Map<string, GroupInfo>();
+  const nodes = ids.map((id) => {
+    const u = m.unit(id);
+    const group = `comp:${u.component}`;
+    if (!groups.has(group)) {
+      const c = m.idx.components.find((x) => x.name === u.component);
+      groups.set(group, {
+        label: u.component,
+        sub: c?.description ?? "",
+        origin: c && c.has_core && c.has_cust ? "Mixed" : c && !c.has_core ? "Cust" : "Core",
+      });
+    }
+    return { ...unitNode(m, u), tier: UNIT_TIER[u.kind], group };
+  });
   const agg = new Map<string, GEdge>();
   for (const e of m.idx.edges) {
     if (!opts.edgeKinds.has(e.kind) || !shown.has(e.from) || !shown.has(e.to)) continue;
@@ -284,7 +308,7 @@ function unitsGraph(
   }
   const edges = [...agg.values()];
   for (const g of edges) g.label = g.kind === "calls" && g.count > 1 ? `${g.count} calls` : "";
-  return { nodes, edges, truncated, hidden };
+  return { nodes, edges, truncated, hidden, tiers: UNIT_TIERS, groups };
 }
 
 /**

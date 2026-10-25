@@ -352,6 +352,7 @@ function renderGraph(fit = false) {
   const filtering = ui.selectMode === "filter" && h.dim;
   const g: Graph = filtering
     ? {
+        ...full,
         nodes: full.nodes.filter((n) => h.lit.has(n.id)),
         edges: full.edges.filter((e) => h.hotEdges.has(e.key) || h.selEdges.has(e.key)),
         truncated: 0,
@@ -361,14 +362,15 @@ function renderGraph(fit = false) {
   const prevPlaced = ui.placed, prevKey = ui.filterKey;
   // Keep the full view to return to, unless this render also changes the graph (then fit on the way back).
   if (filterKey && !prevKey) ui.savedView = fit ? null : { key: graphKey(), view: { ...ui.view } };
-  // Objects sit in bands, grouped by file; components in bands by how much is Cust's, as a
-  // grid. A filtered Components view shows the few related components as a dependency flow.
-  const banded = ui.level === "objects" || (ui.level === "components" && !filtering);
+  // Every level is banded: components by how much is Cust's (an alphabetical grid), files by
+  // file type in a box per component, objects from client to database in a box per file.
+  // Filtering keeps the same bands, with only the related items in them.
+  const banded = !!g.tiers;
   const maxRowWidth = Math.max(900, ($("canvas").clientWidth || 900) * 1.6);
   const tile = ui.level === "components";
-  // The components grid stays alphabetical and draws only the selection's links; all of them
-  // at once is a tangle.
-  const litEdgesOnly = tile && banded;
+  // The components grid stays alphabetical and draws only the selection's links (all of them
+  // at once is a tangle); filtered, the links are all the selection's.
+  const litEdgesOnly = tile;
   let placed: Map<string, Placed>;
   if (banded) {
     const res = layoutBands(
