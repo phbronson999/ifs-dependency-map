@@ -39,7 +39,7 @@ const DB_TIER = 6;
 /** Components view bands: how much of each component is Cust's. */
 const COMPONENT_TIERS: Tier[] = [
   { label: "Cust components", hint: "only in the Cust folder" },
-  { label: "Customised", hint: "Core components with Cust files" },
+  { label: "Customized", hint: "Core components with Cust files" },
   { label: "Used by Cust", hint: "Core only, but Cust code links to them" },
   { label: "Core", hint: "Core only, not touched by Cust" },
 ];
