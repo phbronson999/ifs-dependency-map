@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 43);
+    assert_eq!(idx.stats.files, 44);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -266,7 +266,38 @@ fn unresolved_include() {
 #[test]
 fn total_findings_are_exactly_the_planted_ones() {
     let idx = fixtures();
-    assert_eq!(idx.findings.len(), 15);
+    assert_eq!(idx.findings.len(), 16);
+}
+
+#[test]
+fn a_cust_column_that_makes_a_core_query_ambiguous() {
+    let idx = fixtures();
+    let text = |s: &Step| format!("{}:{} {}", idx.files[s.file].rel_path.rsplit('/').next().unwrap(), s.line, s.note.as_deref().unwrap_or(""));
+    let f = findings(&idx, "COLUMN_AMBIGUOUS");
+    // Only the unprefixed `priority` in the two-relation cursor; not the prefixed one, not the
+    // single-relation one, not the alias priority_site.
+    assert_eq!(f.len(), 1, "{:?}", f.iter().map(|f| &f.message).collect::<Vec<_>>());
+    let f = f[0];
+    assert_eq!(f.severity, Severity::Error);
+    assert!(f.involves_cust);
+    let loc = f.location.as_ref().unwrap();
+    assert_eq!((idx.files[loc.file].rel_path.rsplit('/').next().unwrap(), loc.line), ("ShopOrderHandling.plsvc", 39));
+    let trails: Vec<Vec<String>> = f.evidence.iter().map(|t| t.steps.iter().map(text).collect()).collect();
+    assert_eq!(
+        trails,
+        [
+            vec!["ShopOrder-Cust.entity:8 the attribute Priority of ShopOrder becomes column PRIORITY of SHOP_ORD".to_string()],
+            vec![
+                "ShopOrderHandling.plsvc:39 `priority` has no alias prefix, so Oracle looks for it in every relation of the FROM".to_string(),
+                "ShopOrderHandling.plsvc:40 reads SHOP_ORD so and SHOP_ORDER_LINE sol".to_string(),
+            ],
+            vec!["ShopOrderLine.entity:16 the attribute Priority of ShopOrderLine".to_string()],
+        ]
+    );
+    assert_eq!(f.suggestion.as_ref().unwrap().snippet.as_deref(), Some("- <NAME>Priority</NAME>\n+ <NAME>TiPriority</NAME>"));
+    // The finding points at both relations and the method.
+    let names: Vec<String> = f.nodes.iter().map(|n| if n.starts_with('r') { idx.relations[id_index(n)].name.clone() } else { idx.objects[id_index(n)].name.clone() }).collect();
+    assert_eq!(names, ["SHOP_ORD", "SHOP_ORDER_LINE", "Get_Top_Priority___"]);
 }
 
 #[test]

@@ -22,6 +22,7 @@ changed and compiles as delivered); the *Core only* chip shows them.
 | `LAYER_MISMATCH` | warning | `layer Cust;` in the Core folder, or `layer Core;` in the Cust folder. |
 | `OVERRIDE_NO_BASE` | warning / info | `@Override`/`@Overtake` with nothing to layer over (info for projection entities, whose base may be an LU `.entity`). |
 | `UNRESOLVED_INCLUDE` / `UNRESOLVED_PROJECTION` | warning | Name not found in either folder. |
+| `COLUMN_AMBIGUOUS` | error | A Cust attribute (or Cust `@Override VIEW` column) gives a view or table a column that a query uses without an alias prefix, while another relation in the same FROM already has it: the query no longer compiles (ORA-00918). Only SQL in `.plsql`, `.plsvc` and `.views` files is checked. |
 
 ## How Core and Cust are modelled
 
@@ -96,7 +97,7 @@ src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 ## Running
 
 ```sh
-cargo test                                         # 33 tests
+cargo test                                         # 36 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli
@@ -109,8 +110,8 @@ The desktop app remembers the two folders. "Open" on any file runs
 
 ## Not done yet
 
-- The rest of `.entity` (attributes, references, state machine) and `.enumeration`.
-  Only the table and view names are read so far.
+- The rest of `.entity` (references, state machine) and `.enumeration`.
+  Only the table and view names and the attributes are read so far.
 - Tables generated for projection `virtual`s (`*_VRT`), which show up as undefined relations.
 - `lov X with ReferenceYSelector` links.
 - Persisted index with incremental rescans (indexing is fast enough to run in full for now: about 0.2 s for 6,000 files).

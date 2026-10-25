@@ -687,6 +687,7 @@ pub fn index(opts: &IndexOptions) -> Index {
 
     // Views and tables: where each is defined, and what each view reads.
     let mut rel_defs: Vec<(String, RelationDef)> = Vec::new();
+    let mut cols = analyze::Columns::default();
     // Each LU's generated view reads its generated table. A Cust entity's rename wins over
     // the Core one's; otherwise the names are the defaults (LU in snake case, plus _TAB).
     let mut entities: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -724,6 +725,42 @@ pub fn index(opts: &IndexOptions) -> Index {
         let mut e = edge(vid, tid, EdgeKind::Reads, tfile, tline, idx.files[tfile].root);
         e.detail = Some("generated".into());
         push_edge(&mut edges, e);
+
+        // Columns: every attribute is a column of the view (an enumeration also `<COL>_DB`),
+        // and of the table unless it is derived. A Cust attribute that Core's entity doesn't
+        // have is a column Cust adds.
+        let column = |name: &str| plsql::snake_name(name).to_ascii_uppercase();
+        let core_cols: HashSet<String> = core.map_or(HashSet::new(), |f| ent(f).attributes.iter().map(|a| column(&a.name)).collect());
+        for &f in files {
+            for a in ent(f).attributes.iter().filter(|a| !a.name.is_empty()) {
+                let col = column(&a.name);
+                let source = analyze::ColumnSource { file: f, line: a.line, what: format!("attribute {} of {lu}", a.name) };
+                let mut on = vec![(view.clone(), col.clone())];
+                if a.enumeration {
+                    on.push((view.clone(), format!("{col}_DB")));
+                }
+                if !a.derived {
+                    on.push((table.clone(), col.clone()));
+                }
+                let added = idx.files[f].root == Layer::Cust && !core_cols.contains(&col);
+                for (rel, c) in on {
+                    cols.known.entry(rel.clone()).or_default().entry(c.clone()).or_insert_with(|| source.clone());
+                    if added {
+                        cols.added.entry(rel).or_default().push((c, source.clone()));
+                    }
+                }
+            }
+        }
+    }
+    let mut core_view_cols: HashMap<String, HashSet<String>> = HashMap::new();
+    for fi in (0..idx.files.len()).filter(|&fi| idx.files[fi].root == Layer::Core) {
+        if let Parsed::Db(d) = &parsed[fi] {
+            for v in &d.views {
+                if let Some(c) = &v.columns {
+                    core_view_cols.entry(v.name.clone()).or_default().extend(c.iter().cloned());
+                }
+            }
+        }
     }
     for fi in 0..idx.files.len() {
         let Parsed::Db(d) = &parsed[fi] else { continue };
@@ -731,11 +768,24 @@ pub fn index(opts: &IndexOptions) -> Index {
         for t in &d.tables {
             let how = if t.temporary { "temporary table" } else { "table" };
             rel_defs.push((rel_id(&t.name), RelationDef { file: fi, line: t.line, how: how.into() }));
+            let known = cols.known.entry(t.name.clone()).or_default();
+            for c in &t.columns {
+                known.entry(c.clone()).or_insert_with(|| analyze::ColumnSource { file: fi, line: t.line, what: format!("column {c} of table {}", t.name) });
+            }
         }
         for v in &d.views {
             let vid = rel_id(&v.name);
             let how = v.modifier.as_ref().map_or("view".to_string(), |m| format!("view (@{m})"));
             rel_defs.push((vid.clone(), RelationDef { file: fi, line: v.line, how }));
+            // A Cust @Override of a Core view adds the columns Core's version doesn't have.
+            let core_cols = core_view_cols.get(&v.name);
+            for c in v.columns.iter().flatten() {
+                let source = analyze::ColumnSource { file: fi, line: v.line, what: format!("column {c} of view {}", v.name) };
+                cols.known.entry(v.name.clone()).or_default().entry(c.clone()).or_insert_with(|| source.clone());
+                if layer == Layer::Cust && v.modifier.is_some() && core_cols.is_some_and(|cc| !cc.contains(c)) {
+                    cols.added.entry(v.name.clone()).or_default().push((c.clone(), source));
+                }
+            }
             for (r, line) in &v.reads {
                 if *r != v.name {
                     push_edge(&mut edges, edge(vid.clone(), rel_id(r), EdgeKind::Reads, fi, *line, layer));
@@ -820,7 +870,7 @@ pub fn index(opts: &IndexOptions) -> Index {
 
     // 7. Findings.
     let mut findings = unresolved;
-    findings.extend(analyze::run(&idx));
+    findings.extend(analyze::run(&idx, &cols));
     for f in &mut findings {
         let cust_file = |fi: usize| idx.files[fi].root == Layer::Cust;
         f.involves_cust = f.location.as_ref().is_some_and(|l| cust_file(l.file))

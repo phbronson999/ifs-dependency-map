@@ -29,3 +29,26 @@ BEGIN
    CLOSE get_late;
    RETURN n_;
 END Get_Late_K_P_I___;
+
+FUNCTION Get_Top_Priority___ (
+   order_no_ IN VARCHAR2 ) RETURN NUMBER
+IS
+   -- Only SHOP_ORDER_LINE has PRIORITY in Core, so the unprefixed name compiles. The Cust
+   -- attribute ShopOrder.Priority gives SHOP_ORD one too.
+   CURSOR get_lines IS
+      SELECT sol.line_no, priority, so.contract priority_site
+      FROM   shop_ord so, shop_order_line sol
+      WHERE  so.order_no = sol.order_no
+      AND    so.order_no = order_no_;
+   -- Prefixed, or one relation only: not ambiguous.
+   CURSOR get_prefixed IS
+      SELECT MAX(sol.priority) FROM shop_ord so, shop_order_line sol WHERE so.order_no = sol.order_no;
+   CURSOR get_single IS
+      SELECT priority FROM shop_ord WHERE order_no = order_no_;
+   n_ NUMBER;
+BEGIN
+   FOR rec_ IN get_lines LOOP
+      n_ := GREATEST(NVL(n_, 0), rec_.priority);
+   END LOOP;
+   RETURN n_;
+END Get_Top_Priority___;

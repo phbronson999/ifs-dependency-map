@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ENTITY xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:ifsworld-com:schemas:entity_entity">
+   <NAME>ShopOrder</NAME>
+   <COMPONENT>SHPORD</COMPONENT>
+   <LAYER>Cust</LAYER>
+   <ATTRIBUTES>
+      <ATTRIBUTE>
+         <NAME>Priority</NAME>
+         <IS_DERIVED>1</IS_DERIVED>
+         <DATATYPE>NUMBER</DATATYPE>
+      </ATTRIBUTE>
+   </ATTRIBUTES>
+</ENTITY>

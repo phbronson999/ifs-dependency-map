@@ -9,13 +9,35 @@
 //! - CONNECTION_MISSING / DYNAMIC_NOT_GUARDED: cross-component dependencies
 //!   checked against deploy.ini `[Connections]`.
 //! - LAYER_MISMATCH: a file in the wrong folder for its declared layer.
+//! - COLUMN_AMBIGUOUS: a column Cust adds to a view or table makes an unprefixed column
+//!   name in a query ambiguous, because another relation in the same FROM has it too.
 
 use crate::build::kind_group;
 use crate::graph::tarjan_scc;
 use crate::model::*;
+use crate::sqlscope;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
-pub fn run(idx: &Index) -> Vec<Finding> {
+/// Where a column is defined, for evidence.
+#[derive(Debug, Clone)]
+pub struct ColumnSource {
+    pub file: usize,
+    pub line: usize,
+    /// e.g. "attribute State of CustomerInfo".
+    pub what: String,
+}
+
+/// What the column rule needs to know about columns. Built from the parsed files and not
+/// part of the index.
+#[derive(Debug, Default)]
+pub struct Columns {
+    /// Relation → column → where it is defined, in either layer.
+    pub known: HashMap<String, HashMap<String, ColumnSource>>,
+    /// Relation → the columns Cust adds that Core's definition of it doesn't have.
+    pub added: HashMap<String, Vec<(String, ColumnSource)>>,
+}
+
+pub fn run(idx: &Index, cols: &Columns) -> Vec<Finding> {
     let mut out = Vec::new();
     let mut src = Source::default();
     cycles(idx, &mut out);
@@ -23,7 +45,111 @@ pub fn run(idx: &Index) -> Vec<Finding> {
     overrides(idx, &mut out);
     connections(idx, &mut out);
     layers(idx, &mut out);
+    ambiguous_columns(idx, cols, &mut src, &mut out);
     out
+}
+
+/// A Cust column on relation R, used without an alias prefix in a query block whose FROM
+/// also has a relation with that column (or R twice). Core compiles as delivered, so the
+/// name was unambiguous before Cust added the column; now Oracle can't resolve it.
+fn ambiguous_columns(idx: &Index, cols: &Columns, src: &mut Source, out: &mut Vec<Finding>) {
+    if cols.added.is_empty() {
+        return;
+    }
+    // Only SQL files that read one of those relations are read again.
+    let mut files: BTreeSet<usize> = BTreeSet::new();
+    for e in &idx.edges {
+        if e.kind == EdgeKind::Reads
+            && e.to.starts_with('r')
+            && cols.added.contains_key(&idx.relations[id_index(&e.to)].name)
+            && matches!(idx.files[e.file].kind, FileKind::Plsql | FileKind::Plsvc | FileKind::Views)
+        {
+            files.insert(e.file);
+        }
+    }
+    let rel_id: HashMap<&str, &str> = idx.relations.iter().map(|r| (r.name.as_str(), r.id.as_str())).collect();
+    let file_name = |fi: usize| idx.files[fi].rel_path.rsplit('/').next().unwrap_or("").to_string();
+    for fi in files {
+        let Ok(bytes) = std::fs::read(&idx.files[fi].abs_path) else { continue };
+        let text = sqlscope::prepare(&String::from_utf8_lossy(&bytes));
+        let mut seen: HashSet<(usize, String)> = HashSet::new();
+        for b in sqlscope::blocks(&text) {
+            for (k, item) in b.from.iter().enumerate() {
+                let Some(added) = cols.added.get(&item.name) else { continue };
+                for (col, csrc) in added {
+                    let Some(&(_, line)) = b.refs.iter().find(|(r, _)| r == col) else { continue };
+                    let other = b.from.iter().enumerate().find(|&(j, o)| {
+                        j != k && (o.name == item.name || cols.known.get(&o.name).is_some_and(|m| m.contains_key(col)))
+                    });
+                    let Some((_, other)) = other else { continue };
+                    if !seen.insert((line, col.clone())) {
+                        continue;
+                    }
+                    let lower = col.to_ascii_lowercase();
+                    let cust_file = file_name(csrc.file);
+                    let mut f = finding(
+                        Severity::Error,
+                        "COLUMN_AMBIGUOUS",
+                        format!("`{lower}` becomes ambiguous in {}", file_name(fi)),
+                        format!(
+                            "{cust_file} adds the {} to {}, so it gets a {col} column. {}:{line} uses `{lower}` without an alias \
+                             prefix in a query that also reads {}, which has {col} too. Oracle can't tell which is meant \
+                             (ORA-00918: column ambiguously defined), so this code no longer compiles.",
+                            csrc.what, item.name, idx.files[fi].rel_path, other.name
+                        ),
+                    );
+                    f.location = Some(Location { file: fi, line });
+                    for name in [&item.name, &other.name] {
+                        if let Some(id) = rel_id.get(name.as_str()) {
+                            if !f.nodes.iter().any(|n| n == id) {
+                                f.nodes.push(id.to_string());
+                            }
+                        }
+                    }
+                    // The method the query is in.
+                    if let Some(o) = idx.objects.iter().filter(|o| o.file == fi && o.line <= line).max_by_key(|o| o.line) {
+                        f.nodes.push(o.id.clone());
+                    }
+                    let alias = |o: &sqlscope::FromItem| o.alias.as_ref().map_or(String::new(), |a| format!(" {}", a.to_ascii_lowercase()));
+                    let mut query = vec![src.step(idx, fi, line, Some(format!("`{lower}` has no alias prefix, so Oracle looks for it in every relation of the FROM")))];
+                    for (o, what) in [(item, "reads"), (other, "also reads")] {
+                        let note = format!("{what} {}{}", o.name, alias(o));
+                        match query.iter_mut().find(|s| s.line == o.line) {
+                            // Both on one FROM line: one step that names both.
+                            Some(s) => s.note = Some(format!("{} and {}{}", s.note.take().unwrap_or_default(), o.name, alias(o))),
+                            None => query.push(src.step(idx, fi, o.line, Some(note))),
+                        }
+                    }
+                    query.sort_by_key(|s| s.line);
+                    let mut evidence = vec![
+                        Trail {
+                            title: format!("Cust adds {col} to {}", item.name),
+                            steps: vec![src.step(idx, csrc.file, csrc.line, Some(format!("the {} becomes column {col} of {}", csrc.what, item.name)))],
+                        },
+                        Trail { title: "The query".into(), steps: query },
+                    ];
+                    if other.name == item.name {
+                        evidence.push(Trail {
+                            title: format!("{} is read twice", item.name),
+                            steps: vec![src.step(idx, fi, other.line, Some("both copies now have the column".into()))],
+                        });
+                    } else if let Some(o) = cols.known.get(&other.name).and_then(|m| m.get(col)) {
+                        evidence.push(Trail {
+                            title: format!("{} already has {col}", other.name),
+                            steps: vec![src.step(idx, o.file, o.line, Some(format!("the {}", o.what)))],
+                        });
+                    }
+                    f.evidence = evidence;
+                    f.suggestion = Some(Suggestion {
+                        summary: "Give the Cust attribute a name Core doesn't use, e.g. with your prefix. Core code can't be changed, so the Cust side has to move.".into(),
+                        snippet: csrc.what.strip_prefix("attribute ").and_then(|w| w.split(' ').next()).map(|a| format!("- <NAME>{a}</NAME>\n+ <NAME>Ti{a}</NAME>")),
+                        target: Some(idx.files[csrc.file].rel_path.clone()),
+                    });
+                    out.push(f);
+                }
+            }
+        }
+    }
 }
 
 /// Reads the source lines that evidence cites, loading each file once.

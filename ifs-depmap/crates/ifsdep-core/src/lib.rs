@@ -21,6 +21,7 @@ pub mod marble;
 pub mod model;
 pub mod plsql;
 pub mod scan;
+pub mod sqlscope;
 
 pub use build::{index, IndexOptions};
 pub use model::*;

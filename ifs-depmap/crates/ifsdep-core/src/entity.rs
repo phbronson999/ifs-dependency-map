@@ -1,9 +1,22 @@
-//! `.entity` (LU model, XML). Only what decides the generated view and table is read:
-//! the LU name, component, layer, and the code generation properties that rename them.
-//! The XML is element-only, so a tag reader that tracks the element path is enough.
+//! `.entity` (LU model, XML). What decides the generated view and table is read: the LU
+//! name, component, layer, the code generation properties that rename them, and the
+//! attributes (their columns). The XML is element-only, so a tag reader that tracks the
+//! element path is enough.
+
+/// An attribute: a column of the generated view, and of the table unless it is derived.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Attribute {
+    pub name: String,
+    pub line: usize,
+    /// `IS_DERIVED` 1: computed in the view (`DB_SQL_IMPLEMENTATION`), not stored in the table.
+    pub derived: bool,
+    /// `DATATYPE` ENUMERATION: the view also has `<COLUMN>_DB`.
+    pub enumeration: bool,
+}
 
 #[derive(Debug, Default)]
 pub struct ParsedEntity {
+    pub attributes: Vec<Attribute>,
     /// LU name and its line.
     pub name: Option<(String, usize)>,
     pub component: Option<String>,
@@ -46,6 +59,9 @@ pub fn parse(text: &str) -> ParsedEntity {
             continue;
         }
         path.push(name);
+        if path == ["ENTITY", "ATTRIBUTES", "ATTRIBUTE"] {
+            out.attributes.push(Attribute::default());
+        }
         // Leaf text runs to the next tag.
         let end = text[i..].find('<').map_or(text.len(), |n| i + n);
         let value = text[i..end].trim();
@@ -58,6 +74,22 @@ pub fn parse(text: &str) -> ParsedEntity {
             "ENTITY/NAME" => out.name = Some((value, line)),
             "ENTITY/COMPONENT" => out.component = Some(value.to_ascii_uppercase()),
             "ENTITY/LAYER" => out.layer = Some(value),
+            "ENTITY/ATTRIBUTES/ATTRIBUTE/NAME" => {
+                if let Some(a) = out.attributes.last_mut() {
+                    a.name = value;
+                    a.line = line;
+                }
+            }
+            "ENTITY/ATTRIBUTES/ATTRIBUTE/IS_DERIVED" => {
+                if let Some(a) = out.attributes.last_mut() {
+                    a.derived = value == "1";
+                }
+            }
+            "ENTITY/ATTRIBUTES/ATTRIBUTE/DATATYPE" => {
+                if let Some(a) = out.attributes.last_mut() {
+                    a.enumeration = value.eq_ignore_ascii_case("ENUMERATION");
+                }
+            }
             p => match p.strip_prefix(CODEGEN) {
                 Some("DB_TABLE_NAME") => out.table = Some((value.to_ascii_uppercase(), line)),
                 Some("DB_VIEW_NAME") => out.view = Some((value.to_ascii_uppercase(), line)),
@@ -99,6 +131,12 @@ mod tests {
          </CODE_GENERATION_PROPERTIES>
          <NAME>Company</NAME>
          <IS_MANDATORY/>
+         <DATATYPE>TEXT</DATATYPE>
+      </ATTRIBUTE>
+      <ATTRIBUTE>
+         <NAME>YearStatus</NAME>
+         <IS_DERIVED>1</IS_DERIVED>
+         <DATATYPE>ENUMERATION</DATATYPE>
       </ATTRIBUTE>
    </ATTRIBUTES>
 </ENTITY>
@@ -109,5 +147,7 @@ mod tests {
         assert_eq!(e.view, Some(("ACC_YEAR".into(), 5)));
         assert_eq!(e.table, Some(("ACCOUNTING_YEAR_TAB".into(), 6)), "the entity's, not an attribute's");
         assert!(e.layer.is_none());
+        let attr = |name: &str, line, derived, enumeration| Attribute { name: name.into(), line, derived, enumeration };
+        assert_eq!(e.attributes, [attr("Company", 23, false, false), attr("YearStatus", 28, true, true)]);
     }
 }

@@ -1,7 +1,7 @@
 //! `.views` and `.storage` files: the views and tables they define, and what each
 //! view reads. Statements end at the first `;` outside comments and strings.
 
-use crate::plsql;
+use crate::{plsql, sqlscope};
 
 #[derive(Debug, Clone)]
 pub struct ViewDef {
@@ -14,6 +14,8 @@ pub struct ViewDef {
     pub reads: Vec<(String, usize)>,
     /// `Xxx_API.Method(...)` calls in the view: (`XXX_API`, `Method`, line).
     pub calls: Vec<(String, String, usize)>,
+    /// The columns its select list produces; None when it has `*` or an unnamed expression.
+    pub columns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default)]
@@ -30,6 +32,8 @@ pub struct TableDef {
     pub name: String,
     pub line: usize,
     pub temporary: bool,
+    /// Column names, upper-cased, where the definition lists them.
+    pub columns: Vec<String>,
 }
 
 /// Words that may come before `TABLE` in a .storage table definition.
@@ -73,7 +77,7 @@ pub fn parse(text: &str) -> ParsedDb {
         if let Some(at) = table_at.filter(|&at| words[..at].iter().all(|w| TABLE_PREFIXES.contains(&w.to_ascii_uppercase().as_str()))) {
             if let Some(name) = words.get(at + 1).filter(|_| words.get(at + 2).is_some_and(|w| w.eq_ignore_ascii_case("IS"))) {
                 let temporary = words[..at].iter().any(|w| w.eq_ignore_ascii_case("TEMPORARY"));
-                out.tables.push(TableDef { name: name.to_ascii_uppercase(), line: line_no, temporary });
+                out.tables.push(TableDef { name: name.to_ascii_uppercase(), line: line_no, temporary, columns: Vec::new() });
             }
             pending = None;
             continue;
@@ -88,6 +92,7 @@ pub fn parse(text: &str) -> ParsedDb {
                     modifier: pending.take(),
                     reads: Vec::new(),
                     calls: Vec::new(),
+                    columns: None,
                 });
                 let vi = out.views.len() - 1;
                 if t.contains(';') {
@@ -102,6 +107,38 @@ pub fn parse(text: &str) -> ParsedDb {
     }
     if let Some((vi, first)) = open {
         spans.push((vi, first, usize::MAX));
+    }
+    // Columns of `TABLE x IS ( col type ..., col type ... )`: the first name of each item.
+    let clines: Vec<&str> = cleaned.lines().collect();
+    for t in &mut out.tables {
+        let rest = clines[t.line - 1..].join("\n");
+        let Some(open) = rest.find('(') else { continue };
+        let (mut depth, mut item_start) = (0, true);
+        for (k, c) in rest[open..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                ',' if depth == 1 => item_start = true,
+                _ if item_start && depth == 1 && is_name_char(c) => {
+                    let s = &rest[open + k..];
+                    let name: String = s.chars().take_while(|&c| is_name_char(c)).collect();
+                    t.columns.push(name.to_ascii_uppercase());
+                    item_start = false;
+                }
+                _ => {}
+            }
+        }
+    }
+    // A view's columns: what its select list produces.
+    let tlines: Vec<&str> = text.lines().collect();
+    for &(vi, first, last) in &spans {
+        let end = last.min(tlines.len());
+        out.views[vi].columns = sqlscope::select_columns(&sqlscope::prepare(&tlines[first - 1..end].join("\n")));
     }
     for t in created_tables(text) {
         if !out.tables.iter().any(|d| d.name == t.name) {
@@ -134,9 +171,9 @@ fn created_tables(text: &str) -> Vec<TableDef> {
     let upper = blank_comments(text).to_ascii_uppercase();
     let lines: Vec<&str> = upper.lines().collect();
     let mut out: Vec<TableDef> = Vec::new();
-    let mut add = |name: String, line: usize, temporary: bool| {
+    let mut add = |name: String, line: usize, temporary: bool, columns: Vec<String>| {
         if !name.is_empty() && !out.iter().any(|t| t.name == name) {
-            out.push(TableDef { name, line, temporary });
+            out.push(TableDef { name, line, temporary, columns });
         }
     };
     for (i, l) in lines.iter().enumerate() {
@@ -150,8 +187,15 @@ fn created_tables(text: &str) -> Vec<TableDef> {
                     if let Some(name) = quoted_name(&rest[var_end + assign + 2..]) {
                         // The block, up to its END;, must create a table.
                         let end = (i..lines.len()).find(|&j| lines[j].trim_start().starts_with("END;")).unwrap_or(lines.len() - 1);
-                        if let Some(temporary) = creates_table(&lines[i..=end].join(" ")) {
-                            add(name, i + 1, temporary);
+                        let block = lines[i..=end].join(" ");
+                        if let Some(temporary) = creates_table(&block) {
+                            // Set_Table_Column(columns_, 'ORDER_NO', ...) names the columns.
+                            let columns = block
+                                .split("SET_TABLE_COLUMN")
+                                .skip(1)
+                                .filter_map(|s| s.trim_start().strip_prefix('(').and_then(|s| s.split_once(',')).and_then(|(_, s)| quoted_name(s)))
+                                .collect();
+                            add(name, i + 1, temporary, columns);
                         }
                     }
                 }
@@ -168,7 +212,7 @@ fn created_tables(text: &str) -> Vec<TableDef> {
             let id = &l[p..id_end];
             if id.ends_with("TABLE") {
                 if let Some(name) = l[id_end..].trim_start().strip_prefix('(').and_then(quoted_name) {
-                    add(name, i + 1, id.contains("TEMPORARY"));
+                    add(name, i + 1, id.contains("TEMPORARY"), Vec::new());
                 }
             }
         }
@@ -177,7 +221,7 @@ fn created_tables(text: &str) -> Vec<TableDef> {
             let words: Vec<&str> = l[p + 8..].split_whitespace().collect();
             if let Some(at) = words.iter().position(|w| *w == "TABLE").filter(|&at| words[..at].iter().all(|w| *w == "GLOBAL" || *w == "TEMPORARY")) {
                 let name: String = words.get(at + 1).map_or(String::new(), |w| w.chars().take_while(|&c| is_name_char(c)).collect());
-                add(name, i + 1, at > 0);
+                add(name, i + 1, at > 0, Vec::new());
             }
         }
     }
@@ -291,6 +335,10 @@ mod tests {
         assert_eq!(p.views[1].reads, [("SHOP_ORDER_PUB".to_string(), 13)]);
         let tables: Vec<(&str, usize, bool)> = p.tables.iter().map(|t| (t.name.as_str(), t.line, t.temporary)).collect();
         assert_eq!(tables, [("SHOP_ORDER_HIST_TAB", 14, false), ("SHOP_ORDER_TMP", 17, true), ("SHOP_ORDER_IOT_TAB", 19, false)]);
+        // Columns: a view's select list (the Prompt line is not part of it), a table's definition.
+        assert_eq!(v.columns, Some(vec!["ORDER_NO".to_string(), "DESCR".to_string()]));
+        assert_eq!(p.views[1].columns, None, "SELECT * has no known column list");
+        assert_eq!(p.tables[0].columns, ["ORDER_NO"]);
     }
 
     #[test]
@@ -314,5 +362,7 @@ mod tests {
             tables,
             [("SHOP_ORDER_CALC_TAB", 1, true), ("SHOP_ORDER_QUEUE_TAB", 5, false), ("SHOP_ORDER_RUN_TMP_TAB", 17, true), ("SHOP_ORDER_SNAP_TAB", 18, true)]
         );
+        assert_eq!(p.tables[0].columns, ["LAYER"]);
+        assert_eq!(p.tables[1].columns, ["ORDER_NO"], "from Set_Table_Column");
     }
 }

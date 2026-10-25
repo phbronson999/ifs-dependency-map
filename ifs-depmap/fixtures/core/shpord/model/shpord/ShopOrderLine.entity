@@ -12,5 +12,9 @@
          <NAME>LineNo</NAME>
          <DATATYPE>NUMBER</DATATYPE>
       </ATTRIBUTE>
+      <ATTRIBUTE>
+         <NAME>Priority</NAME>
+         <DATATYPE>NUMBER</DATATYPE>
+      </ATTRIBUTE>
    </ATTRIBUTES>
 </ENTITY>
