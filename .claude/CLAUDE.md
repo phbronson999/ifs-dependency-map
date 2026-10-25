@@ -1,6 +1,6 @@
 # C:\devstudio workspace
 
-- `ifs-depmap\ifs-depmap\` is the IFS Dependency Map tool (Rust + TypeScript + Tauri).
+- `ifs-depmap\` is the IFS Dependency Map tool (Rust + TypeScript + Tauri).
   Its own CLAUDE.md has the project context: read it before working on the tool, and run
   cargo / npm commands from that folder.
 - `project-parent-25r1\` is the real IFS Cloud 25R1 source (Developer Studio project).
