@@ -99,7 +99,7 @@ function layoutLayered(
   const preds: number[][] = Array.from({ length: n }, () => []);
   for (let v = 0; v < n; v++) for (const w of dag[v]) preds[w].push(v);
   if (opts.fixedLayers) {
-    // With fixed rows, order by neighbours in any other row, in both directions.
+    // With fixed rows, order by neighbors in any other row, in both directions.
     for (let v = 0; v < n; v++) {
       preds[v] = preds[v].filter((u) => layer[u] !== layer[v]);
       dag[v] = dag[v].filter((w) => layer[w] !== layer[v]);

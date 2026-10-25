@@ -13,6 +13,14 @@ const EDGE_LABEL: Record<string, string> = {
   invokes: "calls", reads: "reads",
 };
 
+/** Width settings: how many canvas widths a band may span before it wraps. */
+const BAND_WIDTHS = {
+  normal: { label: "Normal", factor: 1.6 },
+  wide: { label: "Wide", factor: 2.6 },
+  wider: { label: "Wider", factor: 4 },
+  widest: { label: "Widest", factor: 6.5 },
+};
+
 const ui = {
   model: null as Model | null,
   level: "components" as Level,
@@ -31,6 +39,8 @@ const ui = {
   depth: "direct" as "direct" | "chain",
   /** Draw only what Cust touches (declared in Cust files, or overridden / used by Cust code). */
   custOnly: false,
+  /** How wide a band (or the layered graph) gets before it wraps, as a multiple of the canvas width. */
+  width: "normal" as keyof typeof BAND_WIDTHS,
   /** Group boxes and band extents from the last banded layout. */
   bandLayout: null as null | { groups: GroupBox[]; bands: BandBox[] },
   /** The full graph's view, kept while filtered so leaving the filter returns to it. */
@@ -80,6 +90,8 @@ function boot() {
     if (localStorage.getItem("ifsdepmap.selectMode") === "highlight") ui.selectMode = "highlight";
     if (localStorage.getItem("ifsdepmap.depth") === "chain") ui.depth = "chain";
     ui.custOnly = localStorage.getItem("ifsdepmap.custOnly") === "true";
+    const w = localStorage.getItem("ifsdepmap.width");
+    if (w && w in BAND_WIDTHS) ui.width = w as keyof typeof BAND_WIDTHS;
   } catch { /* storage unavailable */ }
   applyPanels();
   bindEvents();
@@ -216,7 +228,7 @@ function renderToolbar() {
       crumbs.push(`<span>›</span>`, ...[...ui.components].slice(0, 3).map((c) => `<button data-crumb="comp" data-comp="${esc(c)}">${esc(c)}</button>`));
       if (ui.components.size > 3) crumbs.push(`<span>+${ui.components.size - 3}</span>`);
     } else if (ui.focus.size) {
-      crumbs.push(`<span>›</span><span>${ui.focus.size === 1 ? esc(m.unit([...ui.focus][0]).name) : `${ui.focus.size} files`} and neighbours</span>`);
+      crumbs.push(`<span>›</span><span>${ui.focus.size === 1 ? esc(m.unit([...ui.focus][0]).name) : `${ui.focus.size} files`} and neighbors</span>`);
     } else if (ui.level === "units") {
       crumbs.push(`<span>›</span><span>all files</span>`);
     }
@@ -232,10 +244,13 @@ function renderToolbar() {
   let filters = "";
   if (ui.level === "units") {
     filters += `<div class="chipset"><span class="lbl">Kinds</span>${ALL_UNIT_KINDS.map((k) => chip("unit", k, UNIT_GLYPH[k].toLowerCase(), ui.unitKinds.has(k))).join("")}</div>`;
-    filters += `<div class="chipset"><span class="lbl">Links</span>${UNIT_EDGE_KINDS.map((k) => chip("edge", k, EDGE_LABEL[k], ui.edgeKinds.has(k))).join("")}${chip("neighbors", "1", "neighbours", ui.neighbors)}</div>`;
+    filters += `<div class="chipset"><span class="lbl">Links</span>${UNIT_EDGE_KINDS.map((k) => chip("edge", k, EDGE_LABEL[k], ui.edgeKinds.has(k))).join("")}${chip("neighbors", "1", "neighbors", ui.neighbors)}</div>`;
   } else if (ui.level === "objects") {
     filters += `<div class="chipset"><span class="lbl">Links</span>${OBJECT_EDGE_KINDS.map((k) => chip("edge", k, EDGE_LABEL[k], ui.edgeKinds.has(k))).join("")}</div>`;
   }
+  filters += `<div class="chipset" title="How wide a band gets before it wraps onto another line"><span class="lbl">Width</span>${
+    Object.entries(BAND_WIDTHS).map(([k, w]) => chip("width", k, w.label, ui.width === k)).join("")
+  }</div>`;
   // Objects are drawn by the file that declares them; files and components by where the unit comes from.
   filters += ui.level === "objects"
     ? `<div class="legend"><span><i class="core"></i>declared in Core file</span><span><i class="cust"></i>declared in Cust file</span><span><i class="db"></i>table / view</span></div>`
@@ -366,7 +381,7 @@ function renderGraph(fit = false) {
   // file type in a box per component, objects from client to database in a box per file.
   // Filtering keeps the same bands, with only the related items in them.
   const banded = !!g.tiers;
-  const maxRowWidth = Math.max(900, ($("canvas").clientWidth || 900) * 1.6);
+  const maxRowWidth = Math.max(900, ($("canvas").clientWidth || 900) * BAND_WIDTHS[ui.width].factor);
   const tile = ui.level === "components";
   // The components grid stays alphabetical and draws only the selection's links (all of them
   // at once is a tangle); filtered, the links are all the selection's.
@@ -379,7 +394,9 @@ function renderGraph(fit = false) {
         row: n.override || n.upper ? 0 : 1, group: n.group ?? `t${n.tier ?? 0}`,
       })),
       tile ? [] : g.edges.map((e) => ({ from: e.from, to: e.to })),
-      { maxRowWidth, maxGroupWidth: tile ? maxRowWidth : maxRowWidth * 0.62, header: tile ? 0 : 22 },
+      // A component's box in the Files view may span the whole band; a file's box in the
+      // Objects view wraps sooner so several files share a line.
+      { maxRowWidth, maxGroupWidth: ui.level === "objects" ? maxRowWidth * 0.62 : maxRowWidth, header: tile ? 0 : 22 },
     );
     placed = res.placed;
     ui.bandLayout = { groups: res.groups, bands: res.bands };
@@ -1053,7 +1070,10 @@ function bindEvents() {
       const key = chip.dataset.key!;
       if (chip.dataset.chip === "unit") ui.unitKinds.has(key) ? ui.unitKinds.delete(key) : ui.unitKinds.add(key);
       else if (chip.dataset.chip === "edge") ui.edgeKinds.has(key) ? ui.edgeKinds.delete(key) : ui.edgeKinds.add(key);
-      else ui.neighbors = !ui.neighbors;
+      else if (chip.dataset.chip === "width") {
+        ui.width = key as keyof typeof BAND_WIDTHS;
+        try { localStorage.setItem("ifsdepmap.width", ui.width); } catch { /* storage unavailable */ }
+      } else ui.neighbors = !ui.neighbors;
       renderToolbar();
       renderGraph(true);
       return;
