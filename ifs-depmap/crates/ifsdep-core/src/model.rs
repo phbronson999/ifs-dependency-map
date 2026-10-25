@@ -21,6 +21,8 @@ pub enum FileKind {
     Views,
     /// `TABLE x IS (...)` definitions, indexes and sequences.
     Storage,
+    /// Install scripts (`.cre`): only the tables their PL/SQL blocks create are read.
+    Cre,
 }
 
 impl FileKind {
@@ -38,6 +40,7 @@ impl FileKind {
             "entity" => Some(Self::Entity),
             "views" => Some(Self::Views),
             "storage" => Some(Self::Storage),
+            "cre" => Some(Self::Cre),
             _ => None,
         }
     }
@@ -213,6 +216,8 @@ pub struct Component {
     pub name: String,
     pub has_core: bool,
     pub has_cust: bool,
+    /// deploy.ini `[ComponentName] Description=` (the Core copy's when both have one).
+    pub description: Option<String>,
     pub deploy_files: Vec<usize>,
     pub connections: Vec<Connection>,
 }

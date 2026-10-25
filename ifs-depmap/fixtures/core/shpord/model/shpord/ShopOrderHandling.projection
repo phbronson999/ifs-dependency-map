@@ -57,3 +57,4 @@ action ReleaseOrder {
 
 --------------------------------- FUNCTIONS ---------------------------------
 function GetDefaultSite Text;
+function GetLateKPI Number;

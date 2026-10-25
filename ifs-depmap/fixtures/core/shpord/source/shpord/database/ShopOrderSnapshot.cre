@@ -1,0 +1,8 @@
+-- Install script: snapshot table used while upgrading shop orders.
+BEGIN
+   IF Installation_SYS.Object_Exist('SHOP_ORDER_SNAP_TAB', 'TABLE') THEN
+      EXECUTE IMMEDIATE 'DROP TABLE shop_order_snap_tab';
+   END IF;
+   EXECUTE IMMEDIATE 'CREATE GLOBAL TEMPORARY TABLE shop_order_snap_tab (order_no VARCHAR2(12)) ON COMMIT PRESERVE ROWS';
+END;
+/

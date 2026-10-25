@@ -5,6 +5,8 @@
 //! or `$IF Component_X_SYS.INSTALLED $THEN` guard around them. Comments and
 //! string literals are blanked out first so they can't produce false calls.
 
+use std::collections::HashSet;
+
 #[derive(Debug, Clone)]
 pub struct Method {
     pub kind: &'static str,
@@ -251,7 +253,79 @@ const FROM_LIST_END: &[&str] = &[
     "THEN", "ELSE", "END", "BEGIN", "LOOP", "INTO", "SELECT", "PIVOT", "UNPIVOT", "WITH",
 ];
 
+/// Names a `WITH` clause defines (`WITH a AS (...), b (x, y) AS (...)`), keyed by statement
+/// number (statements counted by `;`). They are local to the query, not tables or views.
+fn with_names(cleaned: &str) -> HashSet<(usize, String)> {
+    let mut toks: Vec<&str> = Vec::new();
+    for line in cleaned.lines() {
+        let mut j = 0;
+        while j < line.len() {
+            let c = line[j..].chars().next().unwrap();
+            if is_ident(c) {
+                let (_, end) = ident_at(line, j);
+                toks.push(&line[j..end]);
+                j = end;
+            } else {
+                if !c.is_whitespace() {
+                    toks.push(&line[j..j + c.len_utf8()]);
+                }
+                j += c.len_utf8();
+            }
+        }
+    }
+    // `name AS (` or `name (cols) AS (` at toks[i]?
+    let defines = |i: usize| -> bool {
+        let mut k = i + 1;
+        if toks.get(k) == Some(&"(") {
+            let mut d = 0;
+            while let Some(&t) = toks.get(k) {
+                d += (t == "(") as i32 - (t == ")") as i32;
+                k += 1;
+                if d == 0 {
+                    break;
+                }
+            }
+        }
+        toks.get(k).is_some_and(|t| t.eq_ignore_ascii_case("AS")) && toks.get(k + 1) == Some(&"(")
+    };
+    let mut out = HashSet::new();
+    let (mut stmt, mut depth) = (0usize, 0i32);
+    let mut lists: Vec<i32> = Vec::new(); // depths of open WITH lists
+    let mut candidate = false;
+    for i in 0..toks.len() {
+        let t = toks[i];
+        let was_candidate = std::mem::take(&mut candidate);
+        match t {
+            "(" => depth += 1,
+            ")" => {
+                depth -= 1;
+                lists.retain(|&d| d <= depth);
+            }
+            ";" => {
+                stmt += 1;
+                depth = 0;
+                lists.clear();
+            }
+            "," => candidate = lists.last() == Some(&depth),
+            _ if t.eq_ignore_ascii_case("WITH") => candidate = true,
+            _ if t.eq_ignore_ascii_case("SELECT") && lists.last() == Some(&depth) => {
+                lists.pop();
+            }
+            _ if was_candidate && t.starts_with(|c: char| c.is_ascii_alphabetic()) && defines(i) => {
+                out.insert((stmt, t.to_ascii_uppercase()));
+                if lists.last() != Some(&depth) {
+                    lists.push(depth);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn relations_in(cleaned: &str, methods: &[Method]) -> Vec<Read> {
+    let local = with_names(cleaned);
+    let mut stmt = 0usize;
     let mut out = Vec::new();
     let mut prev = String::new();
     let mut expect = false;
@@ -282,6 +356,7 @@ fn relations_in(cleaned: &str, methods: &[Method]) -> Vec<Read> {
                         from_lists.clear();
                         expect = false;
                         depth = 0;
+                        stmt += 1;
                     }
                     _ => {}
                 }
@@ -299,6 +374,7 @@ fn relations_in(cleaned: &str, methods: &[Method]) -> Vec<Read> {
                     && !skip.contains(&upper.as_str())
                     && (after_into || !next.starts_with('('))
                     && !next.starts_with('.')
+                    && !local.contains(&(stmt, upper.clone()))
                 {
                     let in_method = methods.iter().rposition(|m| m.line <= line_no);
                     out.push(Read { relation: upper.clone(), line: line_no, in_method });
@@ -418,8 +494,25 @@ pub fn package_name(stem: &str) -> String {
     format!("{}_API", snake_name(stem))
 }
 
-/// `GetDefaultSite` → `Get_Default_Site` (IFS PascalCase → Snake_Case).
+/// `GetDefaultSite` → `Get_Default_Site` (IFS PascalCase → Snake_Case). Every capital
+/// starts a word, so acronyms split letter by letter: `JobKPI` → `Job_K_P_I`, as IFS
+/// names its packages, tables and .plsvc methods.
 pub fn snake_name(stem: &str) -> String {
+    let mut out = String::new();
+    let mut prev: Option<char> = None;
+    for c in stem.chars() {
+        if c.is_ascii_uppercase() && prev.is_some_and(|p| p != '_') {
+            out.push('_');
+        }
+        out.push(c);
+        prev = Some(c);
+    }
+    out
+}
+
+/// The older reading that keeps acronyms whole (`GetOCTResult` → `Get_OCT_Result`), still
+/// seen in some hand-written .plsvc method names.
+pub fn snake_name_grouped(stem: &str) -> String {
     let chars: Vec<char> = stem.chars().collect();
     let mut out = String::new();
     for (i, &c) in chars.iter().enumerate() {
@@ -465,6 +558,22 @@ mod tests {
         assert_eq!(package_name("ShopOrder"), "Shop_Order_API");
         assert_eq!(package_name("ShopOrdUtil"), "Shop_Ord_Util_API");
         assert_eq!(package_name("UserAllowedSite"), "User_Allowed_Site_API");
+        // Every capital starts a word, acronyms included.
+        assert_eq!(package_name("JobKPI"), "Job_K_P_I_API");
+        assert_eq!(snake_name("PAvAircraftWP"), "P_Av_Aircraft_W_P");
+        assert_eq!(snake_name_grouped("GetOCTResult"), "Get_OCT_Result");
+    }
+
+    #[test]
+    fn with_clause_names_are_not_relations() {
+        let src = "CURSOR c IS\n   WITH late AS (SELECT order_no FROM shop_order_tab WHERE x = 1),\n\
+                   counted (n) AS\n   (SELECT COUNT(*) FROM late l JOIN late m ON 1 = 1)\n\
+                   SELECT n FROM counted, part_tab p START WITH a = 1 CONNECT BY PRIOR a = b;\n\
+                   SELECT 1 FROM late;\n";
+        let r = relations(&blank_comments_and_strings(src));
+        let names: Vec<&str> = r.iter().map(|(n, _)| n.as_str()).collect();
+        // `late` is a table again in the next statement, where no WITH defines it.
+        assert_eq!(names, ["SHOP_ORDER_TAB", "PART_TAB", "LATE"]);
     }
 
     #[test]

@@ -127,7 +127,7 @@ json_enum!(Layer { Core => "Core", Cust => "Cust" });
 json_enum!(FileKind {
     Client => "client", Projection => "projection", Fragment => "fragment",
     Plsvc => "plsvc", Plsql => "plsql", DeployIni => "deployini",
-    Entity => "entity", Views => "views", Storage => "storage",
+    Entity => "entity", Views => "views", Storage => "storage", Cre => "cre",
 });
 json_enum!(UnitKind {
     Client => "client", Projection => "projection", Fragment => "fragment",
@@ -151,7 +151,7 @@ json_struct!(Edge { id, from, to, kind, file, line, layer, dynamic, count, detai
 json_struct!(Relation { id, name, kind, defs });
 json_struct!(RelationDef { file, line, how });
 json_struct!(Connection { target, kind, layer, file, line });
-json_struct!(Component { name, has_core, has_cust, deploy_files, connections });
+json_struct!(Component { name, has_core, has_cust, description, deploy_files, connections });
 json_struct!(Location { file, line });
 json_struct!(Suggestion { summary, snippet, target });
 json_struct!(Step { file, line, text, note });

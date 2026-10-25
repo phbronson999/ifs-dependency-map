@@ -16,3 +16,16 @@ IS
 BEGIN
    Shop_Order_API.Release__(order_no_);
 END Release_Order___;
+
+FUNCTION Get_Late_K_P_I___ RETURN NUMBER
+IS
+   CURSOR get_late IS
+      WITH late_orders AS (SELECT order_no FROM shop_order_k_p_i_tab WHERE late = 'TRUE')
+      SELECT COUNT(*) FROM late_orders;
+   n_ NUMBER;
+BEGIN
+   OPEN get_late;
+   FETCH get_late INTO n_;
+   CLOSE get_late;
+   RETURN n_;
+END Get_Late_K_P_I___;

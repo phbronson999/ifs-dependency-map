@@ -10,3 +10,14 @@ TABLE shop_order_hist_tab IS
 PRIMARY KEY shop_order_hist_pk IS shop_order_hist_tab (order_no, history_no);
 
 SEQUENCE shop_order_hist_seq IS MAXVALUE 999999999999 INCREMENT BY 1 START WITH 1 NOCACHE;
+
+BEGIN
+   DECLARE
+      table_name_ VARCHAR2(30) := 'SHOP_ORDER_QUEUE_TAB';
+      columns_    Installation_SYS.ColumnTabType;
+   BEGIN
+      Installation_SYS.Reset_Column_Table(columns_);
+      Installation_SYS.Set_Table_Column(columns_, 'ORDER_NO', 'VARCHAR2(12)', 'N');
+      Installation_SYS.Create_Temporary_Table(table_name_, columns_, TRUE);
+   END;
+END;

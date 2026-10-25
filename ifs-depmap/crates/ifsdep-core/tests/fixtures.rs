@@ -44,7 +44,9 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 40);
+    assert_eq!(idx.stats.files, 42);
+    let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
+    assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
 }
 
@@ -332,7 +334,21 @@ fn views_lead_to_their_tables() {
 
     // A table defined in .storage, and one generated for a pure Cust LU.
     assert_eq!(defs("SHOP_ORDER_HIST_TAB"), ["table ShopOrder.storage:5"]);
+    // Tables created by PL/SQL blocks in .storage and .cre files, named in strings.
+    assert_eq!(defs("SHOP_ORDER_QUEUE_TAB"), ["temporary table ShopOrder.storage:16"]);
+    assert_eq!(defs("SHOP_ORDER_SNAP_TAB"), ["temporary table ShopOrderSnapshot.cre:6"]);
     assert_eq!(defs("TI_QUALITY_CHECKS_TAB"), ["generated table TiQualityChecks-Cust.entity:3"]);
+
+    // ShopOrderKPI renames only its view; the table keeps the LU's name, and every capital of
+    // the acronym starts a word. The function GetLateKPI finds Get_Late_K_P_I___, whose WITH
+    // name late_orders is not a relation.
+    assert_eq!(reads_of(&idx, "SHOP_ORD_KPI"), ["SHOP_ORDER_K_P_I_TAB"]);
+    assert_eq!(defs("SHOP_ORDER_K_P_I_TAB"), ["generated table ShopOrderKPI.entity:8"]);
+    let f = object(&idx, "ShopOrderHandling", "GetLateKPI", false);
+    let chain = reach(&idx, &f.id);
+    assert!(chain.iter().any(|c| c == "function Get_Late_K_P_I___"), "{chain:?}");
+    assert!(chain.iter().any(|c| c == "table SHOP_ORDER_K_P_I_TAB"), "{chain:?}");
+    assert!(idx.relations.iter().all(|r| r.name != "LATE_ORDERS"));
 }
 
 #[test]

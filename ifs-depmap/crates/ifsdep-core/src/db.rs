@@ -63,7 +63,9 @@ pub fn parse(text: &str) -> ParsedDb {
             }
             continue;
         }
-        let words: Vec<&str> = t.split_whitespace().collect();
+        // `TABLE x IS(` is written without the space too.
+        let spaced = t.replace('(', " ( ");
+        let words: Vec<&str> = spaced.split_whitespace().collect();
         let first = words.first().map(|w| w.to_ascii_uppercase()).unwrap_or_default();
         let second = words.get(1).copied().unwrap_or("").trim_end_matches(';');
         // `[TEMPORARY | INDEX ORGANIZED] TABLE name IS`
@@ -77,7 +79,8 @@ pub fn parse(text: &str) -> ParsedDb {
             continue;
         }
         match first.as_str() {
-            "LAYER" => out.layer = Some(second.to_string()),
+            // `layer Core;` alone on its line, not a column called layer (`layer VARCHAR2(100) NULL,`).
+            "LAYER" if words.len() == 2 && t.ends_with(';') && out.layer.is_none() => out.layer = Some(second.to_string()),
             "VIEW" if !second.is_empty() => {
                 out.views.push(ViewDef {
                     name: second.to_ascii_uppercase(),
@@ -100,6 +103,11 @@ pub fn parse(text: &str) -> ParsedDb {
     if let Some((vi, first)) = open {
         spans.push((vi, first, usize::MAX));
     }
+    for t in created_tables(text) {
+        if !out.tables.iter().any(|d| d.name == t.name) {
+            out.tables.push(t);
+        }
+    }
 
     let in_view = |line: usize| spans.iter().find(|&&(_, a, b)| a <= line && line <= b).map(|&(vi, _, _)| vi);
     for (rel, line) in plsql::relations(&cleaned) {
@@ -114,6 +122,138 @@ pub fn parse(text: &str) -> ParsedDb {
         for (pkg, method) in plsql::calls_in(line) {
             out.views[vi].calls.push((pkg, method, i + 1));
         }
+    }
+    out
+}
+
+/// Tables a PL/SQL block creates, named in a string rather than declared:
+/// - `table_name_ VARCHAR2(30) := 'X_TAB';` in a block that goes on to create a table,
+/// - `Create_Temporary_Table('X_TMP_TAB', ...)`: a create-table call whose first argument is the name,
+/// - `'CREATE [GLOBAL TEMPORARY] TABLE x (...)'` passed to EXECUTE IMMEDIATE.
+fn created_tables(text: &str) -> Vec<TableDef> {
+    let upper = blank_comments(text).to_ascii_uppercase();
+    let lines: Vec<&str> = upper.lines().collect();
+    let mut out: Vec<TableDef> = Vec::new();
+    let mut add = |name: String, line: usize, temporary: bool| {
+        if !name.is_empty() && !out.iter().any(|t| t.name == name) {
+            out.push(TableDef { name, line, temporary });
+        }
+    };
+    for (i, l) in lines.iter().enumerate() {
+        // table_name_ [VARCHAR2(30)] := 'X';
+        if let Some(at) = word_at(l, "TABLE_NAME") {
+            let rest = &l[at..];
+            let var_end = rest.find(|c: char| !is_name_char(c)).unwrap_or(rest.len());
+            if let Some(assign) = rest[var_end..].find(":=") {
+                let between = &rest[var_end..var_end + assign];
+                if between.chars().all(|c| c.is_ascii_alphanumeric() || c.is_whitespace() || c == '(' || c == ')') {
+                    if let Some(name) = quoted_name(&rest[var_end + assign + 2..]) {
+                        // The block, up to its END;, must create a table.
+                        let end = (i..lines.len()).find(|&j| lines[j].trim_start().starts_with("END;")).unwrap_or(lines.len() - 1);
+                        if let Some(temporary) = creates_table(&lines[i..=end].join(" ")) {
+                            add(name, i + 1, temporary);
+                        }
+                    }
+                }
+            }
+        }
+        // Create_Temporary_Table('X', ...), Create_Table('X', ...)
+        let mut from = 0;
+        while let Some(p) = l[from..].find("CREATE_").map(|p| from + p) {
+            from = p + 7;
+            if p > 0 && is_name_char(l[..p].chars().last().unwrap()) {
+                continue;
+            }
+            let id_end = l[p..].find(|c: char| !is_name_char(c)).map_or(l.len(), |e| p + e);
+            let id = &l[p..id_end];
+            if id.ends_with("TABLE") {
+                if let Some(name) = l[id_end..].trim_start().strip_prefix('(').and_then(quoted_name) {
+                    add(name, i + 1, id.contains("TEMPORARY"));
+                }
+            }
+        }
+        // 'CREATE [GLOBAL TEMPORARY] TABLE x ...'
+        if let Some(p) = l.find("'CREATE ") {
+            let words: Vec<&str> = l[p + 8..].split_whitespace().collect();
+            if let Some(at) = words.iter().position(|w| *w == "TABLE").filter(|&at| words[..at].iter().all(|w| *w == "GLOBAL" || *w == "TEMPORARY")) {
+                let name: String = words.get(at + 1).map_or(String::new(), |w| w.chars().take_while(|&c| is_name_char(c)).collect());
+                add(name, i + 1, at > 0);
+            }
+        }
+    }
+    out
+}
+
+/// Whether upper-cased code creates a table, and if so whether a temporary one: a
+/// `Create_[Temporary_]Table(` call or a `CREATE [GLOBAL TEMPORARY] TABLE` statement.
+/// `Create_Index(table_name_, ...)` doesn't count.
+fn creates_table(code: &str) -> Option<bool> {
+    let words: Vec<&str> = code.split(|c: char| !is_name_char(c)).filter(|w| !w.is_empty()).collect();
+    for (k, w) in words.iter().enumerate() {
+        if w.starts_with("CREATE_") && w.ends_with("_TABLE") {
+            return Some(w.contains("TEMPORARY"));
+        }
+        if *w == "CREATE" {
+            let rest = &words[k + 1..];
+            if let Some(at) = rest.iter().position(|w| *w == "TABLE").filter(|&at| rest[..at].iter().all(|w| *w == "GLOBAL" || *w == "TEMPORARY")) {
+                return Some(at > 0);
+            }
+        }
+    }
+    None
+}
+
+fn is_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '#'
+}
+
+/// Where `word` starts in `line` as a whole identifier prefix (not inside another name).
+fn word_at(line: &str, word: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(p) = line[from..].find(word).map(|p| from + p) {
+        if p == 0 || !is_name_char(line[..p].chars().last().unwrap()) {
+            return Some(p);
+        }
+        from = p + word.len();
+    }
+    None
+}
+
+/// `  'X_TAB' ...` → `X_TAB`, when the quoted text is a plain name.
+fn quoted_name(s: &str) -> Option<String> {
+    let s = s.trim_start().strip_prefix('\'')?;
+    let end = s.find('\'')?;
+    let name = &s[..end];
+    (!name.is_empty() && name.chars().all(is_name_char)).then(|| name.to_string())
+}
+
+/// Blanks `--` and `/* */` comments, keeping string literals (which hold the names here).
+fn blank_comments(text: &str) -> String {
+    let b = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let (mut i, mut in_str) = (0, false);
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            in_str = c != b'\'';
+        } else if c == b'\'' {
+            in_str = true;
+        } else if c == b'-' && b.get(i + 1) == Some(&b'-') {
+            while i < b.len() && b[i] != b'\n' {
+                out.push(' ');
+                i += 1;
+            }
+            continue;
+        } else if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            let end = text[i + 2..].find("*/").map_or(b.len(), |e| i + 2 + e + 2);
+            out.extend(text[i..end].chars().map(|c| if c == '\n' { '\n' } else { ' ' }));
+            i = end;
+            continue;
+        }
+        // Multi-byte characters are copied whole.
+        let len = text[i..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&text[i..i + len]);
+        i += len;
     }
     out
 }
@@ -151,5 +291,28 @@ mod tests {
         assert_eq!(p.views[1].reads, [("SHOP_ORDER_PUB".to_string(), 13)]);
         let tables: Vec<(&str, usize, bool)> = p.tables.iter().map(|t| (t.name.as_str(), t.line, t.temporary)).collect();
         assert_eq!(tables, [("SHOP_ORDER_HIST_TAB", 14, false), ("SHOP_ORDER_TMP", 17, true), ("SHOP_ORDER_IOT_TAB", 19, false)]);
+    }
+
+    #[test]
+    fn tables_created_from_plsql_blocks() {
+        let src = "TEMPORARY TABLE shop_order_calc_tab IS(\n   layer VARCHAR2(12) NULL );\n\
+                   BEGIN\n   DECLARE\n      table_name_ VARCHAR2(30) := 'SHOP_ORDER_QUEUE_TAB';\n\
+                   BEGIN\n      Installation_SYS.Set_Table_Column(columns_, 'ORDER_NO', 'VARCHAR2(12)', 'N');\n\
+                   IF NOT Installation_SYS.Table_Exist(table_name_) THEN\n         Installation_SYS.Create_Table(table_name_, columns_);\n      END IF;\n   END;\n\
+                   DECLARE\n      table_name_ := 'SHOP_ORDER_OLD_TAB';\n   BEGIN\n      Installation_SYS.Remove_Table(table_name_, TRUE);\n   END;\n\
+                   Create_Temporary_Table('SHOP_ORDER_RUN_TMP_TAB', 'SHOP_ORDER_TAB', 'ORDER_NO');\n\
+                   EXECUTE IMMEDIATE 'CREATE GLOBAL TEMPORARY TABLE shop_order_snap_tab (order_no VARCHAR2(12))';\n\
+                   stmnt_ := 'CREATE GLOBAL TEMPORARY TABLE ' || table_name_;\n\
+                   -- table_name_ VARCHAR2(30) := 'COMMENTED_OUT_TAB'; Create_Table\n\
+                   END;\n\
+                   DECLARE\n   table_name_ VARCHAR2(30) := 'SHOP_ORDER_MV';\nBEGIN\n   Database_SYS.Create_Index(table_name_, index_name_, columns_);\nEND;\n";
+        let p = parse(src);
+        let tables: Vec<(&str, usize, bool)> = p.tables.iter().map(|t| (t.name.as_str(), t.line, t.temporary)).collect();
+        assert_eq!(p.layer, None, "a column called layer is not a layer declaration");
+        // The blocks that only remove SHOP_ORDER_OLD_TAB or index SHOP_ORDER_MV create nothing.
+        assert_eq!(
+            tables,
+            [("SHOP_ORDER_CALC_TAB", 1, true), ("SHOP_ORDER_QUEUE_TAB", 5, false), ("SHOP_ORDER_RUN_TMP_TAB", 17, true), ("SHOP_ORDER_SNAP_TAB", 18, true)]
+        );
     }
 }

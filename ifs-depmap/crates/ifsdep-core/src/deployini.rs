@@ -2,6 +2,8 @@
 #[derive(Debug, Default)]
 pub struct DeployIni {
     pub component: Option<String>,
+    /// `[ComponentName] Description=Customer Orders`
+    pub description: Option<String>,
     /// (target component, STATIC|DYNAMIC, line)
     pub connections: Vec<(String, String, usize)>,
 }
@@ -24,6 +26,9 @@ pub fn parse(text: &str) -> DeployIni {
             "component" if k.eq_ignore_ascii_case("name") => {
                 out.component = Some(v.to_ascii_uppercase());
             }
+            "componentname" if k.eq_ignore_ascii_case("description") && !v.is_empty() => {
+                out.description = Some(v.to_string());
+            }
             "connections" if !k.is_empty() => {
                 out.connections.push((k.to_ascii_uppercase(), v.to_ascii_uppercase(), i + 1));
             }
@@ -37,8 +42,9 @@ pub fn parse(text: &str) -> DeployIni {
 mod tests {
     #[test]
     fn reads_connections() {
-        let d = super::parse("[Component]\nName=Shpord\n\n[Connections]\nMfgstd=STATIC\nCallc=DYNAMIC\n");
+        let d = super::parse("[Component]\nName=Shpord\n\n[ComponentName]\nDescription=Shop Orders\n\n[Connections]\nMfgstd=STATIC\nCallc=DYNAMIC\n");
         assert_eq!(d.component.as_deref(), Some("SHPORD"));
-        assert_eq!(d.connections[1], ("CALLC".into(), "DYNAMIC".into(), 6));
+        assert_eq!(d.description.as_deref(), Some("Shop Orders"));
+        assert_eq!(d.connections[1], ("CALLC".into(), "DYNAMIC".into(), 9));
     }
 }

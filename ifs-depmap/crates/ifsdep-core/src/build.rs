@@ -88,7 +88,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                 }
                 FileKind::Plsvc | FileKind::Plsql => Parsed::Plsql(plsql::parse(&text)),
                 FileKind::DeployIni => Parsed::Deploy(deployini::parse(&text)),
-                FileKind::Views | FileKind::Storage => Parsed::Db(db::parse(&text)),
+                FileKind::Views | FileKind::Storage | FileKind::Cre => Parsed::Db(db::parse(&text)),
                 FileKind::Entity => Parsed::Entity(entity::parse(&text)),
             };
             let (hdr_component, hdr_layer) = match &p {
@@ -636,11 +636,10 @@ pub fn index(opts: &IndexOptions) -> Index {
         if o.section != Some(Section::Projection) || !(o.kind == "action" || o.kind == "function") {
             continue;
         }
-        let snake = plsql::snake_name(&o.name);
         let candidates = plsvc_for.get(&id_index(&o.unit)).cloned().unwrap_or_default();
-        let hit = candidates
-            .iter()
-            .find_map(|&s| method_in(s, &format!("{snake}___")).or_else(|| method_in(s, &snake)));
+        let hit = [plsql::snake_name(&o.name), plsql::snake_name_grouped(&o.name)].iter().find_map(|snake| {
+            candidates.iter().find_map(|&s| method_in(s, &format!("{snake}___")).or_else(|| method_in(s, snake)))
+        });
         if let Some(t) = hit {
             let mut e = edge(o.id.clone(), idx.objects[t].id.clone(), EdgeKind::ImplementedBy, o.file, o.line, idx.files[o.file].root);
             e.detail = Some(idx.objects[t].name.clone());
@@ -714,8 +713,11 @@ pub fn index(opts: &IndexOptions) -> Index {
             [cust, core].into_iter().flatten().find_map(|f| entity_rename(ent(f), view).clone().map(|(n, l)| (n, f, l)))
         };
         let (lu, lu_line) = ent(base).name.clone().expect("grouped by name");
-        let (view, vfile, vline) = pick(true).unwrap_or((plsql::snake_name(&lu).to_ascii_uppercase(), base, lu_line));
-        let (table, tfile, tline) = pick(false).unwrap_or((format!("{view}_TAB"), base, lu_line));
+        // Both defaults come from the LU: renaming the view leaves the table as LU_TAB
+        // (AccountingYear's view is ACC_YEAR, its table ACCOUNTING_YEAR_TAB).
+        let snake = plsql::snake_name(&lu).to_ascii_uppercase();
+        let (view, vfile, vline) = pick(true).unwrap_or((snake.clone(), base, lu_line));
+        let (table, tfile, tline) = pick(false).unwrap_or((format!("{snake}_TAB"), base, lu_line));
         let (vid, tid) = (rel_id(&view), rel_id(&table));
         rel_defs.push((vid.clone(), RelationDef { file: vfile, line: vline, how: "generated view".into() }));
         rel_defs.push((tid.clone(), RelationDef { file: tfile, line: tline, how: "generated table".into() }));
@@ -790,6 +792,7 @@ pub fn index(opts: &IndexOptions) -> Index {
             name: f.component.clone(),
             has_core: false,
             has_cust: false,
+            description: None,
             deploy_files: Vec::new(),
             connections: Vec::new(),
         });
@@ -799,6 +802,9 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
         if let Parsed::Deploy(d) = &parsed[fi] {
             c.deploy_files.push(fi);
+            if c.description.is_none() || f.root == Layer::Core {
+                c.description = d.description.clone().or(c.description.take());
+            }
             for (target, kind, line) in &d.connections {
                 c.connections.push(Connection {
                     target: target.clone(),
