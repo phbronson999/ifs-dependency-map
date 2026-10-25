@@ -3,8 +3,9 @@
 //! It does not try to understand every Marble construct. It tracks brace
 //! depth and pulls out what the dependency graph needs: the header, includes,
 //! top-level declarations (with `@Override`/`@Overtake` and
-//! `@DynamicComponentDependency`), and `reference` / `array` /
-//! `Enumeration(X)` links inside entity-like blocks.
+//! `@DynamicComponentDependency`), actions and functions bound inside an
+//! entity's body, and `reference` / `array` / `Enumeration(X)` links inside
+//! entity-like blocks.
 
 use crate::model::{FileKind, Section};
 
@@ -70,6 +71,9 @@ pub const CLIENT_KWS: &[&str] = &[
     "page", "list", "group", "dialog", "command", "selector", "assistant", "navigator", "card",
     "tree", "chart", "calendar", "sheet", "tabs", "singleton",
 ];
+
+/// Declarations whose body can hold bound actions and functions.
+const BOUND_TO: &[&str] = &["entity", "query", "virtual", "summary", "singleton"];
 
 #[derive(Default)]
 struct Pending {
@@ -190,6 +194,29 @@ pub fn parse(text: &str, file_kind: FileKind) -> ParsedMarble {
             pending = Pending::default();
         } else if let Some(ci) = current {
             let first = words.first().map(|w| w.to_ascii_lowercase()).unwrap_or_default();
+            // Bound actions and functions, declared inside an entity's body. They are scoped
+            // to that entity, which becomes their target. Inside an `@Override entity` they
+            // are part of the override, layered over the actions bound to the base.
+            let parent = &out.decls[ci];
+            if depth_before == 1
+                && (first == "action" || first == "function")
+                && BOUND_TO.contains(&parent.kind.as_str())
+                && parent.section == Section::Projection
+            {
+                if let Some(name) = words.get(1) {
+                    let decl = Decl {
+                        kind: first.clone(),
+                        name: name.clone(),
+                        line: line_no,
+                        modifier: pending.modifier.take().or_else(|| parent.modifier.clone()),
+                        section: Section::Projection,
+                        target: Some(parent.name.clone()),
+                        dynamic: pending.dynamic.take().or_else(|| parent.dynamic.clone()),
+                        refs: Vec::new(),
+                    };
+                    out.decls.push(decl);
+                }
+            }
             if (first == "reference" || first == "array") && words.len() >= 2 {
                 if let Some(t) = words.iter().position(|w| w == "to").and_then(|p| words.get(p + 1)) {
                     out.decls[ci].refs.push(Ref {
@@ -434,5 +461,37 @@ action AddIndirectClocking {
         let p = parse("client ShopOrder;\ncomponent SHPORD;\nlayer Core;\nprojection ShopOrderHandling;\n", FileKind::Client);
         assert_eq!(p.name.as_deref(), Some("ShopOrder"));
         assert_eq!(p.projection, Some(("ShopOrderHandling".into(), 4)));
+    }
+
+    #[test]
+    fn bound_actions_inside_an_entity_body() {
+        let src = "projection P;\n\
+                   entity Order {\n   attribute OrderNo Text;\n   action Print {\n      initialcheck implementation;\n   }\n\
+                   @Override\n   function GetTotal Number;\n   reference X(Y) to Z(Y);\n}\n\
+                   structure S {\n   action NotBound;\n}\n\
+                   action TopLevel;\n\
+                   @Overtake\nvirtual V {\n   action Run;\n}\n";
+        let p = parse(src, FileKind::Projection);
+        let names: Vec<(&str, &str, Option<&str>)> =
+            p.decls.iter().map(|d| (d.kind.as_str(), d.name.as_str(), d.target.as_deref())).collect();
+        assert_eq!(
+            names,
+            [
+                ("entity", "Order", None),
+                ("action", "Print", Some("Order")),
+                ("function", "GetTotal", Some("Order")),
+                ("structure", "S", None),
+                ("action", "TopLevel", None),
+                ("virtual", "V", None),
+                ("action", "Run", Some("V")),
+            ]
+        );
+        assert_eq!(p.decls[1].line, 4);
+        assert_eq!(p.decls[2].modifier.as_deref(), Some("Override"));
+        // Inside an overriding virtual the bound action is part of the override.
+        assert!(p.decls[1].modifier.is_none());
+        assert_eq!(p.decls[6].modifier.as_deref(), Some("Overtake"));
+        // The entity keeps the reference that follows its bound actions.
+        assert_eq!(p.decls[0].refs.len(), 1);
     }
 }

@@ -26,7 +26,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - `src-tauri/` Tauri 2 shell: `pick_folder`, `index_folders`, `open_in_editor` (`code -g`)
 
 ## Commands
-- `cargo test` (24 tests, must stay green)
+- `cargo test` (26 tests, must stay green)
 - `cargo run --release --bin ifsdep -- --core <dir> --cust <dir> --json out.json [--strict]`
 - `npm install`, then `npm run tauri dev` / `npm run demo` (builds ui/dist/demo.html)
 
@@ -34,8 +34,13 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - Layer comes from the folder a file is in, never from the filename.
 - A unit = logical name. `X.fragment` (Core) + `X-Cust.fragment` (Cust) = one unit with an overlay.
   A `-Cust` file with no Core match is a pure Cust unit and is the base for overrides of its constructs.
+- Core is never edited, so Core never depends on Cust: names in Core files resolve against Core
+  only (decided 2026-10-25; the CORE_DEPENDS_ON_CUST rule was removed for this reason).
 - `@Override`/`@Overtake` resolve to whichever base exists (Core or pure Cust): same unit first,
-  then what the unit includes, then anywhere.
+  then what the unit includes, then anywhere. With no base in any file the base is generated
+  from the model (any Core override, a pure Cust package, or a template method like `Insert___`).
+- Other names (calls, references, bindings) resolve in the same unit, then what it includes,
+  then what a client/projection it ends up in includes. Never anywhere.
 - Calls into an overridden method land on the override, then follow Overrides to the base.
 - Objects view follows links downward to tables/views (names only until .views is parsed).
 - The tool is read-only: it suggests fixes but never writes to IFS files.

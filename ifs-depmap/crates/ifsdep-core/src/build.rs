@@ -245,11 +245,15 @@ pub fn index(opts: &IndexOptions) -> Index {
         let Some(ui) = file_unit(&idx, fi) else { continue };
         let from = idx.units[ui].id.clone();
         let layer = idx.files[fi].root;
+        // Core code only sees Core units; a pure Cust unit with the same name is not it.
+        let lookup = |kind: UnitKind, name: String| -> Option<usize> {
+            unit_map.get(&(kind, name)).copied().filter(|&t| layer == Layer::Cust || idx.units[t].origin == Layer::Core)
+        };
         match &parsed[fi] {
             Parsed::Marble(m) => {
                 if let Some((p, line)) = &m.projection {
-                    match unit_map.get(&(UnitKind::Projection, p.to_ascii_uppercase())) {
-                        Some(&t) => push_edge(
+                    match lookup(UnitKind::Projection, p.to_ascii_uppercase()) {
+                        Some(t) => push_edge(
                             &mut edges,
                             edge(from.clone(), idx.units[t].id.clone(), EdgeKind::UsesProjection, fi, *line, layer),
                         ),
@@ -257,8 +261,8 @@ pub fn index(opts: &IndexOptions) -> Index {
                     }
                 }
                 for inc in &m.includes {
-                    match unit_map.get(&(UnitKind::Fragment, inc.name.to_ascii_uppercase())) {
-                        Some(&t) => {
+                    match lookup(UnitKind::Fragment, inc.name.to_ascii_uppercase()) {
+                        Some(t) => {
                             let mut e =
                                 edge(from.clone(), idx.units[t].id.clone(), EdgeKind::Include, fi, inc.line, layer);
                             e.dynamic = inc.dynamic.clone();
@@ -272,7 +276,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                 // Aggregate calls per (target package, effective guard).
                 let mut agg: BTreeMap<(usize, Option<String>), (usize, usize, Vec<String>)> = BTreeMap::new();
                 for c in p.calls.iter().filter(|c| !c.package.is_empty()) {
-                    let Some(&t) = unit_map.get(&(UnitKind::Package, c.package.clone())) else { continue };
+                    let Some(t) = lookup(UnitKind::Package, c.package.clone()) else { continue };
                     if t == ui {
                         continue;
                     }
@@ -368,21 +372,38 @@ pub fn index(opts: &IndexOptions) -> Index {
             })
             .clone()
     };
+    // The clients and projections each unit ends up in. A fragment can use what the
+    // projection including it brings in, without including that itself.
+    let mut roots_of: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (ui, u) in idx.units.iter().enumerate() {
+        if matches!(u.kind, UnitKind::Client | UnitKind::Projection) {
+            for &r in closure(ui).iter() {
+                roots_of.entry(r).or_default().push(ui);
+            }
+        }
+    }
     let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
     for (oi, o) in idx.objects.iter().enumerate() {
         by_name.entry(o.name.to_ascii_uppercase()).or_default().push(oi);
     }
     let file_root: Vec<Layer> = idx.files.iter().map(|f| f.root).collect();
-    // Candidates are plain declarations. With `core_overrides`, a Core declaration that is
-    // itself an override also counts: a Cust override layers over it, not over its base.
+    // Finds the declaration a name in `from_unit` (a file in `from`) refers to: the same unit
+    // first, then what the unit can reach, then what a client or projection the unit ends up
+    // in can reach. Core code only sees Core.
+    //
+    // For an override (`for_override`) the base may also be anywhere, as agreed for the model,
+    // and when `from` is Cust a Core declaration that is itself an override counts: the Cust
+    // override layers over it, not over its base. Everything else is a plain declaration.
     let resolve = |objects: &[Object],
                    closure: &mut dyn FnMut(usize) -> Rc<HashSet<usize>>,
                    name: &str,
                    accept: &dyn Fn(&Object) -> bool,
                    from_unit: usize,
                    exclude: Option<usize>,
-                   core_overrides: bool|
+                   from: Layer,
+                   for_override: bool|
      -> Option<usize> {
+        let core_overrides = for_override && from == Layer::Cust;
         let cands: Vec<usize> = by_name
             .get(&name.to_ascii_uppercase())?
             .iter()
@@ -390,26 +411,35 @@ pub fn index(opts: &IndexOptions) -> Index {
             .filter(|&c| {
                 let o = &objects[c];
                 Some(c) != exclude
+                    && (from == Layer::Cust || file_root[o.file] == Layer::Core)
                     && (o.modifier.is_none() || core_overrides && file_root[o.file] == Layer::Core)
                     && accept(o)
             })
             .collect();
-        if cands.len() <= 1 {
-            return cands.first().copied();
+        if cands.is_empty() {
+            return None;
         }
         let reach = closure(from_unit);
+        let roots = roots_of.get(&from_unit).map(Vec::as_slice).unwrap_or_default();
         cands
             .into_iter()
-            .min_by_key(|&c| {
+            .filter_map(|c| {
                 let u = id_index(&objects[c].unit);
-                if u == from_unit {
+                let rank = if u == from_unit {
                     0
                 } else if reach.contains(&u) {
                     1
-                } else {
+                } else if roots.iter().any(|&r| closure(r).contains(&u)) {
                     2
-                }
+                } else if for_override {
+                    3
+                } else {
+                    return None;
+                };
+                Some((rank, c))
             })
+            .min_by_key(|&(rank, _)| rank)
+            .map(|(_, c)| c)
     };
 
     // Overrides → base.
@@ -430,12 +460,13 @@ pub fn index(opts: &IndexOptions) -> Index {
                 kind_group(&c.kind) == group
                     && c.section.is_none() == is_plsql
                     && (!is_plsql || c.unit == o.unit)
-                    // A Core override layers over Core or generated code, never over Cust.
-                    && (in_cust || file_root[c.file] == Layer::Core)
+                    // A bound action overrides the one bound to the same entity.
+                    && (c.target == o.target || !matches!(o.kind.as_str(), "action" | "function"))
             },
             from_unit,
             Some(oi),
-            in_cust,
+            idx.files[o.file].root,
+            true,
         );
         if base.is_none() {
             // Below Core there is only generated code, and a pure Cust package can only
@@ -495,9 +526,13 @@ pub fn index(opts: &IndexOptions) -> Index {
             .or_else(|| c.iter().copied().find(|&o| is_override(o, Layer::Core)))
             .or_else(|| c.first().copied())
     };
-    let package_method = |target: &str| -> Option<usize> {
+    // Core code only sees Core packages.
+    let package_method = |target: &str, from: Layer| -> Option<usize> {
         let (pkg, m) = target.split_once('.')?;
         let &u = unit_map.get(&(UnitKind::Package, pkg.to_ascii_uppercase()))?;
+        if from == Layer::Core && idx.units[u].origin != Layer::Core {
+            return None;
+        }
         method_in(u, m)
     };
 
@@ -509,7 +544,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         let from_id = idx.objects[*oi].id.clone();
         let (to, kind) = match r.kind {
             RefKind::Enumeration => (
-                resolve(&idx.objects, &mut closure, &r.target, &|c: &Object| c.kind == "enumeration", from_unit, None, false)
+                resolve(&idx.objects, &mut closure, &r.target, &|c: &Object| c.kind == "enumeration", from_unit, None, layer, false)
                     .map(|t| idx.objects[t].id.clone()),
                 EdgeKind::Enumeration,
             ),
@@ -521,6 +556,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                     &|c: &Object| ENTITY_LIKE.contains(&c.kind.as_str()) && c.section == Some(Section::Projection),
                     from_unit,
                     None,
+                    layer,
                     false,
                 )
                 .map(|t| idx.objects[t].id.clone()),
@@ -531,15 +567,22 @@ pub fn index(opts: &IndexOptions) -> Index {
                     &idx.objects,
                     &mut closure,
                     &r.target,
-                    &|c: &Object| (c.kind == "action" || c.kind == "function") && c.section == Some(Section::Projection),
+                    &|c: &Object| {
+                        // An action bound to an entity is only callable from a command for that entity.
+                        let entity = idx.objects[*oi].target.as_deref();
+                        (c.kind == "action" || c.kind == "function")
+                            && c.section == Some(Section::Projection)
+                            && c.target.as_deref().is_none_or(|t| entity.is_some_and(|e| e.eq_ignore_ascii_case(t)))
+                    },
                     from_unit,
                     None,
+                    layer,
                     false,
                 )
                 .map(|t| idx.objects[t].id.clone()),
                 EdgeKind::CallsOperation,
             ),
-            RefKind::Call => (package_method(&r.target).map(|t| idx.objects[t].id.clone()), EdgeKind::Invokes),
+            RefKind::Call => (package_method(&r.target, layer).map(|t| idx.objects[t].id.clone()), EdgeKind::Invokes),
             RefKind::Reads => (Some(rel_id(&r.target)), EdgeKind::Reads),
         };
         if let Some(to) = to {
@@ -605,7 +648,7 @@ pub fn index(opts: &IndexOptions) -> Index {
             let to = if c.package.is_empty() {
                 method_in(id_index(idx.files[fi].unit.as_deref().unwrap_or("u0")), &c.method)
             } else {
-                package_method(&format!("{}.{}", c.package, c.method))
+                package_method(&format!("{}.{}", c.package, c.method), layer)
             };
             let Some(to) = to else { continue };
             if to == from {
@@ -648,7 +691,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         } else {
             (Box::new(|c: &Object| c.section == Some(Section::Projection)), EdgeKind::Binds)
         };
-        if let Some(t) = resolve(&idx.objects, &mut closure, target, &*accept, from_unit, Some(oi), false) {
+        if let Some(t) = resolve(&idx.objects, &mut closure, target, &*accept, from_unit, Some(oi), idx.files[o.file].root, false) {
             push_edge(
                 &mut edges,
                 edge(o.id.clone(), idx.objects[t].id.clone(), kind, o.file, o.line, idx.files[o.file].root),

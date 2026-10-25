@@ -8,7 +8,7 @@
 //! - OVERRIDE_NO_BASE: `@Override`/`@Overtake` with nothing to layer over.
 //! - CONNECTION_MISSING / DYNAMIC_NOT_GUARDED: cross-component dependencies
 //!   checked against deploy.ini `[Connections]`.
-//! - LAYER_MISMATCH / CORE_DEPENDS_ON_CUST: files in the wrong folder for their layer.
+//! - LAYER_MISMATCH: a file in the wrong folder for its declared layer.
 
 use crate::build::kind_group;
 use crate::graph::tarjan_scc;
@@ -41,10 +41,6 @@ fn finding(severity: Severity, rule: &str, title: impl Into<String>, message: im
 
 fn unit<'a>(idx: &'a Index, id: &str) -> &'a Unit {
     &idx.units[id_index(id)]
-}
-
-fn object<'a>(idx: &'a Index, id: &str) -> &'a Object {
-    &idx.objects[id_index(id)]
 }
 
 fn cap(s: &str) -> String {
@@ -221,8 +217,10 @@ fn dup_key(o: &Object) -> String {
         None => "plsql",
     };
     let group = kind_group(&o.kind);
-    if o.kind == "command" {
-        // Commands are scoped by their `for` target (many dialogs have `command Ok`).
+    let bound = o.target.is_some() && (o.kind == "action" || o.kind == "function");
+    if o.kind == "command" || bound {
+        // Commands are scoped by their `for` target (many dialogs have `command Ok`),
+        // and bound actions by the entity they are declared in.
         format!("{section}:{group}:{}:{}", o.name.to_ascii_uppercase(), o.target.clone().unwrap_or_default().to_ascii_uppercase())
     } else {
         format!("{section}:{group}:{}", o.name.to_ascii_uppercase())
@@ -539,45 +537,5 @@ fn layers(idx: &Index, out: &mut Vec<Finding>) {
             target: Some(f.rel_path.clone()),
         });
         out.push(fi);
-    }
-
-    let mut seen: HashSet<(usize, String)> = HashSet::new();
-    for e in &idx.edges {
-        let file = &idx.files[e.file];
-        if file.root != Layer::Core || e.to.starts_with('r') {
-            continue;
-        }
-        let (target_origin, target_name, target_unit) = if e.kind.is_unit_level() {
-            let u = unit(idx, &e.to);
-            (u.origin, u.name.clone(), u.id.clone())
-        } else {
-            // An override of a Core method lives in a Cust file but is still the Core method.
-            // With no base in any file, the base is generated below Core: Core compiles
-            // without Cust, so whatever Core calls exists there.
-            let o = object(idx, &e.to);
-            let origin = if o.modifier.is_some() { o.base_origin.unwrap_or(Layer::Core) } else { idx.files[o.file].root };
-            (origin, format!("{} {}", o.kind, o.name), o.unit.clone())
-        };
-        if target_origin != Layer::Cust || !seen.insert((e.file, target_name.clone())) {
-            continue;
-        }
-        let mut f = finding(
-            Severity::Error,
-            "CORE_DEPENDS_ON_CUST",
-            format!("Core file depends on Cust-only {target_name}"),
-            format!(
-                "{} (Core folder) depends on {target_name}, which only exists in the Cust folder.",
-                file.rel_path
-            ),
-        );
-        f.nodes = vec![file.unit.clone().unwrap_or_default(), target_unit];
-        f.edges = vec![e.id];
-        f.location = Some(Location { file: e.file, line: e.line });
-        f.suggestion = Some(Suggestion {
-            summary: "Core code can't depend on Cust code. Put this dependency in a -Cust overlay of the file instead.".into(),
-            snippet: None,
-            target: None,
-        });
-        out.push(f);
     }
 }

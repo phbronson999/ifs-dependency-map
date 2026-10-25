@@ -13,4 +13,5 @@ entity TiTracebackLine {
    keys = TraceId;
    attribute TraceId Text;
    attribute Contract Text;
+   action Recalculate;
 }

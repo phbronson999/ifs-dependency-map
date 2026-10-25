@@ -19,4 +19,10 @@ entity OrderLine {
    attribute OrderNo Text;
    attribute LineNo Number;
    attribute PartNo Text;
+   attribute Contract Text;
+   -- Not included here: the projection that includes this fragment brings it in.
+   reference ContractRef(Contract) to UserAllowedSiteLov(Contract);
+
+   -- Same name as the action bound to ShopOrder; bound actions are scoped to their entity.
+   action PrintOrder;
 }

@@ -25,6 +25,15 @@ command ReleaseCommand for ShopOrder {
    }
 }
 
+-- Calls the action bound to the ShopOrder entity in the Core projection, not the
+-- unrelated Cust action with the same name.
+command PrintCommand for ShopOrder {
+   label = "Print";
+   execute {
+      call PrintOrder();
+   }
+}
+
 -- Overrides a generated command. The Cust command with the same name must not
 -- become its base: Core never layers over Cust.
 @Override

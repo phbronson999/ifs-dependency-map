@@ -14,7 +14,6 @@ the file and line and shows an example of the fix.
 | `CYCLE` | error | `include fragment` chains that loop. Marked *appears with Cust layer* when the loop only exists once Cust overlays are applied; Core-only loops are reported but no fix is suggested. |
 | `DUPLICATE_DEFINITION` | error | The same construct (structure, entity, function…) reaches one client/projection from two different units. |
 | `MISSING_OVERRIDE` | error | A `-Cust` overlay redeclares a Core construct without `@Override`. |
-| `CORE_DEPENDS_ON_CUST` | error | A file in the Core folder depends on something that only exists in Cust. |
 | `CONNECTION_MISSING` | warning | A cross-component include or `Xxx_API` call with no `[Connections]` entry in deploy.ini. |
 | `DYNAMIC_NOT_GUARDED` | warning | A DYNAMIC connection used without `@DynamicComponentDependency` or a `$IF Component_X_SYS.INSTALLED` guard. |
 | `LAYER_MISMATCH` | warning | `layer Cust;` in the Core folder, or `layer Core;` in the Cust folder. |
@@ -29,8 +28,14 @@ the file and line and shows an example of the fix.
   `ShopOrderCommon-Cust.fragment` (Cust) are one unit with an *overlay*.
 - A `-Cust` file with no Core counterpart is a **pure Cust** unit; its
   generated base is the base for any `@Override` of its constructs.
+- **Core never depends on Cust.** Core is IFS's delivered code, so names in Core
+  files only resolve against Core.
 - `@Override` resolves to whichever base exists, Core or pure Cust, preferring
-  the same unit, then what the unit includes.
+  the same unit, then what the unit includes. When no file declares the base, it
+  is generated from the model (`.entity` / `.projection`), as for every Core
+  override of `Insert___`, `CRUD_Create___` or a getter.
+- Other names (calls, references, bindings) resolve in the same unit, then what
+  it includes, then what the client or projection it ends up in includes.
 - deploy.ini `[Connections]` from the Core and Cust copies of a component are
   combined.
 
@@ -72,7 +77,7 @@ src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 ## Running
 
 ```sh
-cargo test                                         # 24 tests
+cargo test                                         # 26 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli

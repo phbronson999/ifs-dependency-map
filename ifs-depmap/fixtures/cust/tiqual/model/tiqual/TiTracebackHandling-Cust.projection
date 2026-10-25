@@ -9,9 +9,16 @@ include fragment TiTraceback;
 ----------------------------- MAIN ENTRY POINTS -----------------------------
 entityset TiTracebackLineSet for TiTracebackLine;
 
+-- Unrelated to Shop Order: Core code calling an action with this name must not land here.
+action PrintOrder;
+
 -- Overrides the base generated from the pure Cust fragment, not a Core file.
 @Override
 entity TiTracebackLine {
    attribute SiteDescription Text;
    reference SiteRef(Contract) to UserAllowedSiteLov(Contract);
+   -- Part of the override: layers over the action bound in the fragment, not a duplicate.
+   action Recalculate {
+      ludependencies = TiTracebackLine;
+   }
 }

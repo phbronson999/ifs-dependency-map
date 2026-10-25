@@ -168,27 +168,71 @@ fn overrides_of_generated_methods_have_a_base() {
             assert!(!f.title.contains(name), "{}", f.title);
         }
     }
-    // Core calls Close__, which only a Cust override declares: its base is below Core.
-    assert!(findings(&idx, "CORE_DEPENDS_ON_CUST").iter().all(|f| !f.title.contains("Close__")));
 }
 
 #[test]
-fn core_alone_reports_no_overrides_or_cust_dependencies() {
+fn core_alone_reports_no_overrides_without_a_base() {
     // Core never overrides Cust, so with no Cust folder there is nothing to report here.
     let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/core");
     let idx = index(&IndexOptions { core: Some(&core), cust: None });
     assert!(findings(&idx, "OVERRIDE_NO_BASE").is_empty());
-    assert!(findings(&idx, "CORE_DEPENDS_ON_CUST").is_empty());
+}
+
+#[test]
+fn core_code_only_links_to_core() {
+    let idx = fixtures();
+    // Core never depends on Cust. The one exception is a call landing on a Cust override
+    // of a Core method, which is the same method layered over at runtime.
+    for e in idx.edges.iter().filter(|e| idx.files[e.file].root == Layer::Core && !e.to.starts_with('r')) {
+        let ok = if e.kind.is_unit_level() {
+            idx.units[id_index(&e.to)].origin == Layer::Core
+        } else {
+            let o = &idx.objects[id_index(&e.to)];
+            idx.files[o.file].root == Layer::Core || o.modifier.is_some()
+        };
+        assert!(ok, "Core {:?} edge from {} line {} reaches Cust {}", e.kind, idx.files[e.file].rel_path, e.line, e.to);
+    }
+
+    // The client's call lands on the action bound to ShopOrder in its own projection, which
+    // the parser now reads from inside the entity body; not on the unrelated Cust action.
+    let cmd = object(&idx, "ShopOrder", "PrintCommand", false);
+    let targets: Vec<&Object> = idx
+        .edges
+        .iter()
+        .filter(|e| e.from == cmd.id && e.kind == EdgeKind::CallsOperation)
+        .map(|e| &idx.objects[id_index(&e.to)])
+        .collect();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(idx.units[id_index(&targets[0].unit)].name, "ShopOrderHandling");
+    assert_eq!(targets[0].target.as_deref(), Some("ShopOrder"));
+
+    // Two entities each bind a PrintOrder action; that is not a duplicate definition.
+    assert!(findings(&idx, "DUPLICATE_DEFINITION").iter().all(|f| !f.message.contains("PrintOrder")));
+
+    // A fragment's reference resolves through the projection that includes the fragment.
+    let line = object(&idx, "OrderLinesFragment", "OrderLine", false);
+    assert!(
+        idx.edges.iter().any(|e| e.from == line.id
+            && e.kind == EdgeKind::Reference
+            && idx.units[id_index(&idx.objects[id_index(&e.to)].unit)].name == "UserAllowedSiteLovSelector"),
+        "OrderLine.ContractRef should reach UserAllowedSiteLov"
+    );
+
+    // An action bound inside an `@Override entity` overrides the one bound to the base.
+    let recalc = object(&idx, "TiTracebackHandling", "Recalculate", true);
+    let base = &idx.objects[id_index(recalc.base.as_ref().expect("bound action override has a base"))];
+    assert_eq!(idx.units[id_index(&base.unit)].name, "TiTraceback");
+    assert!(findings(&idx, "DUPLICATE_DEFINITION").iter().all(|f| !f.message.contains("Recalculate")));
+    assert!(findings(&idx, "CORE_DEPENDS_ON_CUST").is_empty(), "the rule was removed");
 }
 
 #[test]
 fn deploy_ini_connections() {
     let idx = fixtures();
     let missing: Vec<String> = findings(&idx, "CONNECTION_MISSING").iter().map(|f| f.title.clone()).collect();
-    assert_eq!(missing.len(), 4, "{missing:?}");
+    assert_eq!(missing.len(), 3, "{missing:?}");
     assert!(missing.iter().any(|t| t.starts_with("SHPORD → QUAMAN")));
     assert!(missing.iter().filter(|t| t.starts_with("SHPORD → TIQUAL")).count() == 2);
-    assert!(missing.iter().any(|t| t.starts_with("MPCCOM → TIQUAL")));
 
     // Guarded uses of the DYNAMIC Proj connection are fine; the unguarded Cust call is not.
     let dynamic = findings(&idx, "DYNAMIC_NOT_GUARDED");
@@ -204,24 +248,23 @@ fn layer_rules() {
     let mismatch = findings(&idx, "LAYER_MISMATCH");
     assert_eq!(mismatch.len(), 1);
     assert!(mismatch[0].message.contains("TiPartNotes"));
-    let core_cust = findings(&idx, "CORE_DEPENDS_ON_CUST");
-    assert_eq!(core_cust.len(), 1);
-    assert!(core_cust[0].title.contains("TiQualityLov"));
 }
 
 #[test]
 fn unresolved_include() {
     let idx = fixtures();
     let u = findings(&idx, "UNRESOLVED_INCLUDE");
-    assert_eq!(u.len(), 1);
-    assert!(u[0].message.contains("DoesNotExistSelector"));
+    assert_eq!(u.len(), 2);
+    assert!(u.iter().any(|f| f.message.contains("DoesNotExistSelector")));
+    // TiPartNotes sits in the Core folder, and Core can't see the pure Cust TiQualityLov.
+    assert!(u.iter().any(|f| f.message.contains("TiPartNotes") && f.message.contains("TiQualityLov")));
     assert!(findings(&idx, "UNRESOLVED_PROJECTION").is_empty());
 }
 
 #[test]
 fn total_findings_are_exactly_the_planted_ones() {
     let idx = fixtures();
-    assert_eq!(idx.findings.len(), 16);
+    assert_eq!(idx.findings.len(), 15);
 }
 
 #[test]
@@ -281,7 +324,4 @@ fn objects_link_all_the_way_down_to_tables() {
     for step in ["view SHOP_ORD", "function Get_Part_Description", "function Get_Description", "table INVENTORY_PART_TAB"] {
         assert!(chain.iter().any(|c| c == step), "missing {step} in {chain:?}");
     }
-
-    // The Core call into a method that Cust overrides is not a Core → Cust dependency.
-    assert_eq!(findings(&idx, "CORE_DEPENDS_ON_CUST").len(), 1);
 }

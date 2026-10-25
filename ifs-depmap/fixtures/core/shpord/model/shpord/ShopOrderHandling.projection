@@ -36,6 +36,11 @@ entity ShopOrder {
    @DynamicComponentDependency PROJ
    reference ProjectRef(ProjectId) to ProjectLov(ProjectId);
    array OrderLinesArray(OrderNo) to OrderLine(OrderNo);
+
+   -- Bound action, declared inside the entity.
+   action PrintOrder {
+      initialcheck implementation;
+   }
 }
 
 ------------------------------- ENUMERATIONS --------------------------------
