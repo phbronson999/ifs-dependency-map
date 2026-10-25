@@ -55,14 +55,27 @@ The Objects view follows these links downward as far as they go:
 | action/function → .plsvc method | IFS naming: `ReleaseOrder` → `Release_Order___` |
 | method → method | `Xxx_API.Method(...)`, same-package `Method___(...)`, and `fetch = "Xxx_API.M(...)"` |
 | override → base | `@Override` / `@Overtake` |
-| entity/query/method → table or view | `from = "view"`, `FROM` / `JOIN` / `UPDATE` / `INSERT INTO` in SQL (including `FROM a x, b y` lists) |
+| entity/query/method → table or view | `from = "view"`, `FROM` / `JOIN` / `UPDATE` / `INSERT INTO` in SQL (including `FROM a x, b y` lists; `WITH` names are left out) |
 | view → table or view, method | the view's `SELECT` in a `.views` file |
-| generated view → generated table | the `.entity`: the LU name in snake case, plus `_TAB`, unless `DB_VIEW_NAME` / `DB_TABLE_NAME` rename them (none for `abstract` LUs) |
+| generated view → generated table | the `.entity`: the LU name in snake case (every capital starts a word: `JobKPI` → `JOB_K_P_I`), plus `_TAB`, unless `DB_VIEW_NAME` / `DB_TABLE_NAME` rename them (none for `abstract` LUs) |
 
 A call into a method that Cust overrides lands on the override, then follows
 `@Override` to the Core base. Each table and view shows where it is defined: a
-`.views` or `.storage` statement (`TABLE`, `TEMPORARY TABLE`), or the `.entity` it
-is generated from.
+`.views` or `.storage` statement (`TABLE`, `TEMPORARY TABLE`), a table created by a
+PL/SQL block in `.storage`, `.cre` or `.cdb` (`table_name_ := 'X_TAB'` then
+`Create_Table`, `Create_Temporary_Table('X', …)`, `'CREATE GLOBAL TEMPORARY TABLE x'`),
+or the `.entity` it is generated from.
+
+## Views
+
+- **Components** are in bands: Cust components, Core components with Cust files,
+  Core components that Cust code links to, and the rest. Each band is alphabetical
+  and shows the deploy.ini description. Select one to see its links.
+- **Objects** are in bands from the client down to the database, and within a band
+  each file is a box (tables and views are boxed by the LU that defines them),
+  with the file's overrides on the row above their bases.
+- **Show: Touched by Cust** limits every view to what's declared in Cust files and
+  what Cust code overrides, includes, calls or reads.
 
 ## Layout
 
@@ -83,7 +96,7 @@ src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 ## Running
 
 ```sh
-cargo test                                         # 31 tests
+cargo test                                         # 33 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli
@@ -98,7 +111,6 @@ The desktop app remembers the two folders. "Open" on any file runs
 
 - The rest of `.entity` (attributes, references, state machine) and `.enumeration`.
   Only the table and view names are read so far.
-- Tables generated for projection `virtual`s (`*_VRT`) and `WITH` subquery names,
-  which show up as undefined relations.
+- Tables generated for projection `virtual`s (`*_VRT`), which show up as undefined relations.
 - `lov X with ReferenceYSelector` links.
 - Persisted index with incremental rescans (indexing is fast enough to run in full for now: about 0.2 s for 6,000 files).

@@ -48,7 +48,7 @@ interface Obj {
   base_generated: boolean;
 }
 
-/** A table or view named in `from = "…"` or SQL; name only until .views is indexed. */
+/** A table or view named in `from = "…"` or SQL, or defined in .views / .storage / .cre / .entity. */
 interface Relation {
   id: string;
   name: string;
@@ -76,6 +76,8 @@ interface Component {
   name: string;
   has_core: boolean;
   has_cust: boolean;
+  /** deploy.ini `[ComponentName] Description=`. */
+  description: string | null;
   deploy_files: number[];
   connections: Connection[];
 }

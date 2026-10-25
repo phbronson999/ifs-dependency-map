@@ -257,6 +257,18 @@ marker.m-sel path { fill: var(--accent); }
 .band text.bl { fill: var(--ink); font: 600 11px var(--font-mono); letter-spacing: 0.08em; }
 .band text.bh { fill: var(--muted); font: 11.5px var(--font-body); }
 .band text.sl { fill: var(--cust); font: 600 10.5px var(--font-mono); letter-spacing: 0.03em; }
+/* File groups inside a band: one box per file (or per LU for tables and views). */
+.grp rect { fill: var(--raised); fill-opacity: 0.55; stroke: var(--line); stroke-width: 1.2; }
+.grp.origin-Core rect { stroke: color-mix(in srgb, var(--core) 45%, var(--line)); }
+.grp.origin-Cust rect { stroke: var(--cust); stroke-dasharray: 5 4; }
+.grp.origin-Mixed rect { stroke: color-mix(in srgb, var(--core) 45%, var(--line)); }
+.grp.origin-Mixed rect, .grp.origin-Cust rect { fill: color-mix(in srgb, var(--cust) 5%, var(--raised)); }
+.grp.origin-Db rect { stroke-dasharray: 2 3; }
+.grp text.gl { fill: var(--ink); font: 600 11px var(--font-mono); }
+.grp tspan.gs { fill: var(--muted); font: 400 10.5px var(--font-body); }
+.grp line.split { stroke: var(--cust); stroke-opacity: 0.5; stroke-width: 1; stroke-dasharray: 3 4; }
+.grp text.sl { fill: var(--cust); font: 600 9.5px var(--font-mono); cursor: zoom-in; }
+.grp text.sl:hover { text-decoration: underline; }
 .dimmed .node:not(.is-lit), .dimmed .edge:not(.is-lit) { opacity: 0.22; }
 
 /* ------------------------------------------------------------- details */

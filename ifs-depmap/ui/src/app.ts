@@ -29,6 +29,10 @@ const ui = {
   selectMode: "filter" as "filter" | "highlight",
   /** How far from a selected node to go: one link, or the whole chain up and down. */
   depth: "direct" as "direct" | "chain",
+  /** Draw only what Cust touches (declared in Cust files, or overridden / used by Cust code). */
+  custOnly: false,
+  /** Group boxes and band extents from the last banded layout. */
+  bandLayout: null as null | { groups: GroupBox[]; bands: BandBox[] },
   /** The full graph's view, kept while filtered so leaving the filter returns to it. */
   savedView: null as null | { key: string; view: { x: number; y: number; k: number } },
   /** Identifies the current filtered view ("" when not filtered). */
@@ -75,6 +79,7 @@ function boot() {
     ui.showCore = localStorage.getItem("ifsdepmap.showCore") === "true";
     if (localStorage.getItem("ifsdepmap.selectMode") === "highlight") ui.selectMode = "highlight";
     if (localStorage.getItem("ifsdepmap.depth") === "chain") ui.depth = "chain";
+    ui.custOnly = localStorage.getItem("ifsdepmap.custOnly") === "true";
   } catch { /* storage unavailable */ }
   applyPanels();
   bindEvents();
@@ -204,6 +209,7 @@ function renderToolbar() {
   for (const b of $("selmode").querySelectorAll<HTMLElement>("button")) {
     b.setAttribute("aria-pressed", String(b.dataset.selmode ? b.dataset.selmode === ui.selectMode : b.dataset.depth === ui.depth));
   }
+  for (const b of $("show").querySelectorAll<HTMLElement>("button")) b.setAttribute("aria-pressed", String((b.dataset.show === "cust") === ui.custOnly));
   const crumbs: string[] = [`<button data-crumb="components">All components</button>`];
   if (m && ui.level !== "components") {
     if (ui.components.size) {
@@ -233,7 +239,9 @@ function renderToolbar() {
   // Objects are drawn by the file that declares them; files and components by where the unit comes from.
   filters += ui.level === "objects"
     ? `<div class="legend"><span><i class="core"></i>declared in Core file</span><span><i class="cust"></i>declared in Cust file</span><span><i class="db"></i>table / view</span></div>`
-    : `<div class="legend"><span><i class="core"></i>Core</span><span><i class="overlay"></i>Core + Cust overlay</span><span><i class="cust"></i>pure Cust</span></div>`;
+    : `<div class="legend"><span><i class="core"></i>Core</span><span><i class="overlay"></i>Core + Cust overlay</span><span><i class="cust"></i>pure Cust</span>${
+        ui.level === "components" ? `<span>Select a component to see its links</span>` : ""
+      }</div>`;
   $("filters").innerHTML = filters;
 }
 
@@ -244,13 +252,14 @@ function nodeWidth(n: GNode) {
 
 function buildGraph(): Graph {
   const m = ui.model!;
-  if (ui.level === "components") return componentsGraph(m);
+  const keep = ui.custOnly ? (id: string) => m.touched.has(id) : undefined;
+  if (ui.level === "components") return componentsGraph(m, keep);
   if (ui.level === "units") {
     return unitsGraph(m, {
       components: ui.components, focus: ui.focus, neighbors: ui.neighbors, unitKinds: ui.unitKinds, edgeKinds: ui.edgeKinds,
-    });
+    }, keep);
   }
-  return objectsGraph(m, ui.objUnits, ui.edgeKinds);
+  return objectsGraph(m, ui.objUnits, ui.edgeKinds, keep);
 }
 
 /** Which nodes and edges to emphasise for the current selection. */
@@ -352,17 +361,34 @@ function renderGraph(fit = false) {
   const prevPlaced = ui.placed, prevKey = ui.filterKey;
   // Keep the full view to return to, unless this render also changes the graph (then fit on the way back).
   if (filterKey && !prevKey) ui.savedView = fit ? null : { key: graphKey(), view: { ...ui.view } };
-  const banded = ui.level === "objects";
-  const placed = layoutLayered(
-    g.nodes.map((n) => ({ id: n.id, w: nodeWidth(n), h: 52 })),
-    g.edges.map((e) => ({ from: e.from, to: e.to })),
-    {
-      maxRowWidth: Math.max(900, ($("canvas").clientWidth || 900) * 1.6),
-      // Objects sit in fixed bands; within a band, overrides go on the row above their base.
-      fixedLayers: banded ? new Map(g.nodes.map((n) => [n.id, (n.tier ?? 0) * 2 + (n.override || n.upper ? 0 : 1)])) : undefined,
-      layerGap: banded ? 84 : 70,
-    },
-  );
+  // Objects sit in bands, grouped by file; components in bands by how much is Cust's, as a
+  // grid. A filtered Components view shows the few related components as a dependency flow.
+  const banded = ui.level === "objects" || (ui.level === "components" && !filtering);
+  const maxRowWidth = Math.max(900, ($("canvas").clientWidth || 900) * 1.6);
+  const tile = ui.level === "components";
+  // The components grid stays alphabetical and draws only the selection's links; all of them
+  // at once is a tangle.
+  const litEdgesOnly = tile && banded;
+  let placed: Map<string, Placed>;
+  if (banded) {
+    const res = layoutBands(
+      g.nodes.map((n) => ({
+        id: n.id, w: tile ? 236 : nodeWidth(n), h: 52, band: n.tier ?? 0,
+        row: n.override || n.upper ? 0 : 1, group: n.group ?? `t${n.tier ?? 0}`,
+      })),
+      tile ? [] : g.edges.map((e) => ({ from: e.from, to: e.to })),
+      { maxRowWidth, maxGroupWidth: tile ? maxRowWidth : maxRowWidth * 0.62, header: tile ? 0 : 22 },
+    );
+    placed = res.placed;
+    ui.bandLayout = { groups: res.groups, bands: res.bands };
+  } else {
+    placed = layoutLayered(
+      g.nodes.map((n) => ({ id: n.id, w: nodeWidth(n), h: 52 })),
+      g.edges.map((e) => ({ from: e.from, to: e.to })),
+      { maxRowWidth },
+    );
+    ui.bandLayout = null;
+  }
   ui.placed = placed;
 
   // Where to look. Entering or moving within the filter keeps the selected node where it was
@@ -404,15 +430,19 @@ function renderGraph(fit = false) {
   } else if (!g.nodes.length) {
     notice.className = "notice";
     notice.hidden = false;
-    notice.textContent = ui.level === "objects" ? "Pick a file first: double-tap one in the Files view, or search for it." : "Nothing to show with these filters.";
+    notice.textContent =
+      ui.custOnly && full.hidden ? `Cust doesn't touch any of the ${full.hidden} items here. Switch Show to All code to see them.`
+      : ui.level === "objects" ? "Pick a file first: double-tap one in the Files view, or search for it."
+      : "Nothing to show with these filters.";
   } else notice.hidden = true;
 
   let edgesSvg = "";
   for (const e of g.edges) {
     const s = placed.get(e.from), t = placed.get(e.to);
     if (!s || !t) continue;
-    const { d, mx, my } = edgePath(s, t, e.from === e.to);
     const hot = h.hotEdges.has(e.key), sel = h.selEdges.has(e.key);
+    if (litEdgesOnly && !hot && !sel) continue;
+    const { d, mx, my } = edgePath(s, t, e.from === e.to);
     const marker = hot ? "m-hot" : sel ? "m-sel" : e.layer === "Cust" ? "m-Cust" : "m-default";
     const cls = `edge kind-${e.kind} layer-${e.layer}${hot ? " is-hot is-lit" : ""}${sel ? " is-sel is-lit" : ""}`;
     edgesSvg += `<g class="${cls}" data-edge="${esc(e.key)}"><path class="line" d="${d}" marker-end="url(#${marker})"/>${
@@ -424,17 +454,19 @@ function renderGraph(fit = false) {
     const p = placed.get(n.id)!;
     const x = p.x - p.w / 2, y = p.y - p.h / 2;
     const label = n.label.length > 42 ? n.label.slice(0, 41) + "…" : n.label;
+    const subMax = Math.floor((p.w - 22) / 6.3);
+    const sub = n.sub.length > subMax ? n.sub.slice(0, subMax - 1) + "…" : n.sub;
     const cls = `node origin-${n.origin}${h.hotNodes.has(n.id) ? " is-hot" : ""}${h.selNode === n.id ? " is-sel" : ""}${h.lit.has(n.id) ? " is-lit" : ""}`;
     nodesSvg += `<g class="${cls}" data-node="${esc(n.id)}" transform="translate(${x},${y})">
-<title>${esc(n.label)}</title>
+<title>${esc(n.label)}${n.sub ? `\n${esc(n.sub)}` : ""}</title>
 <rect class="box" width="${p.w}" height="${p.h}" rx="6"/>${n.overlay ? `<rect class="tab" x="${p.w - 6}" y="5" width="3" height="${p.h - 10}" rx="1.5"/>` : ""}
 <text class="glyph" x="10" y="15">${esc(n.glyph)}</text>
 <text x="10" y="32">${esc(label)}</text>
-<text class="sub" x="10" y="45">${esc(n.sub)}</text>${
+<text class="sub" x="10" y="45">${esc(sub)}</text>${
       n.count ? `<g class="badge ${n.sev}" transform="translate(${p.w - 2},2)"><circle r="9"/><text text-anchor="middle" y="3.5">${n.count > 99 ? "99" : n.count}</text></g>` : ""
     }</g>`;
   }
-  vp.innerHTML = `${banded ? bandsSvg(g, placed) : ""}<g class="edges">${edgesSvg}</g><g class="nodes">${nodesSvg}</g>`;
+  vp.innerHTML = `${banded ? bandsSvg(g, placed, ui.bandLayout!) : ""}<g class="edges">${edgesSvg}</g><g class="nodes">${nodesSvg}</g>`;
   $("canvas").classList.toggle("dimmed", h.dim && !filtering);
   renderJump(banded ? g : null);
   if (fit) fitView();
@@ -443,7 +475,7 @@ function renderGraph(fit = false) {
 
 /** What the graph currently shows, apart from the selection. */
 function graphKey() {
-  return [ui.level, [...ui.components].join(","), [...ui.focus].join(","), [...ui.objUnits].join(",")].join("|");
+  return [ui.level, ui.custOnly, [...ui.components].join(","), [...ui.focus].join(","), [...ui.objUnits].join(",")].join("|");
 }
 
 /** The Objects view's bands that are on screen, as buttons that zoom to each (and to its override row). */
@@ -456,12 +488,13 @@ function renderJump(g: Graph | null) {
     if (n.override) t.over++;
     tiers.set(n.tier!, t);
   }
-  el.hidden = tiers.size < 2;
+  el.hidden = tiers.size < 2 || !g?.tiers;
   if (el.hidden) { el.innerHTML = ""; return; }
+  const info = g!.tiers!;
   el.innerHTML = `<span class="lbl">Jump to</span>${[...tiers.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([tier, t]) =>
-      `<button class="chip" data-jump="${tier}" title="${esc(OBJECT_TIERS[tier].hint)}">${esc(OBJECT_TIERS[tier].label)} <b>${t.all}</b></button>${
+      `<button class="chip" data-jump="${tier}" title="${esc(info[tier].hint)}">${esc(info[tier].label)} <b>${t.all}</b></button>${
         t.over && t.over < t.all ? `<button class="chip sub" data-jump="${tier}o" title="The overrides in this band, on the row above their bases">@Override <b>${t.over}</b></button>` : ""
       }`)
     .join("")}`;
@@ -484,37 +517,41 @@ function deselect() {
   renderDetails();
 }
 
-/** Labelled horizontal bands behind the Objects view, one per OBJECT_TIERS entry present. */
-function bandsSvg(g: Graph, placed: Map<string, Placed>) {
-  if (!g.nodes.length) return "";
+/**
+ * Labelled horizontal bands behind a banded view, one per tier present, and inside them a
+ * labelled box per file group (Objects view), split between its override row and its base row.
+ */
+function bandsSvg(g: Graph, placed: Map<string, Placed>, layout: { groups: GroupBox[]; bands: BandBox[] }) {
+  if (!g.nodes.length || !g.tiers) return "";
   let x0 = Infinity, x1 = -Infinity;
   for (const p of placed.values()) { x0 = Math.min(x0, p.x - p.w / 2); x1 = Math.max(x1, p.x + p.w / 2); }
+  for (const b of layout.groups) { x0 = Math.min(x0, b.x); x1 = Math.max(x1, b.x + b.w); }
   x0 -= 28; x1 += 28;
-  const tiers = new Map<number, { top: number; bottom: number; overBottom: number; baseTop: number }>();
-  for (const n of g.nodes) {
-    const p = placed.get(n.id)!;
-    const t = tiers.get(n.tier!) ?? { top: Infinity, bottom: -Infinity, overBottom: -Infinity, baseTop: Infinity };
-    t.top = Math.min(t.top, p.y - p.h / 2);
-    t.bottom = Math.max(t.bottom, p.y + p.h / 2);
-    if (n.override) t.overBottom = Math.max(t.overBottom, p.y + p.h / 2);
-    else t.baseTop = Math.min(t.baseTop, p.y - p.h / 2);
-    tiers.set(n.tier!, t);
-  }
   let out = "";
-  [...tiers.entries()].sort((a, b) => a[0] - b[0]).forEach(([tier, t], i) => {
-    const info = OBJECT_TIERS[tier];
-    const top = t.top - 36, bottom = t.bottom + 14;
+  layout.bands.forEach((band, i) => {
+    const info = g.tiers![band.band];
+    const top = band.top - 36, bottom = band.bottom + 14;
     out += `<g class="band${i % 2 ? " alt" : ""}"><rect x="${x0}" y="${top}" width="${x1 - x0}" height="${bottom - top}"/>
 <line x1="${x0}" x2="${x1}" y1="${top}" y2="${top}"/>
-<text class="bl" data-band="${tier}" x="${x0 + 12}" y="${top + 17}"><title>Zoom to ${esc(info.label)}</title>${esc(info.label.toUpperCase())}</text>
-<text class="bh" x="${x0 + 14 + info.label.length * 8.2}" y="${top + 17}">${esc(info.hint)}</text>`;
-    if (t.overBottom > -Infinity && t.baseTop < Infinity) {
-      // Divider between the override row and the base row it layers over.
-      const y = (t.overBottom + t.baseTop) / 2;
-      out += `<line class="split" x1="${x0 + 12}" x2="${x1 - 12}" y1="${y}" y2="${y}"/><text class="sl" data-band="${tier}o" x="${x0 + 12}" y="${y - 6}"><title>Zoom to the overrides in ${esc(info.label)}</title>@Override ↓ base</text>`;
-    }
-    out += `</g>`;
+<text class="bl" data-band="${band.band}" x="${x0 + 12}" y="${top + 17}"><title>Zoom to ${esc(info.label)}</title>${esc(info.label.toUpperCase())}</text>
+<text class="bh" x="${x0 + 14 + info.label.length * 8.2}" y="${top + 17}">${esc(info.hint)}</text></g>`;
   });
+  for (const b of layout.groups) {
+    const info = g.groups?.get(b.group);
+    if (!info) continue;
+    // Label, then the component / file types after it, cut to the box.
+    const room = Math.floor((b.w - 20) / 6.6);
+    const label = info.label.length > room ? info.label.slice(0, room - 1) + "…" : info.label;
+    const subRoom = room - label.length - 2;
+    const sub = subRoom > 4 ? (info.sub.length > subRoom ? info.sub.slice(0, subRoom - 1) + "…" : info.sub) : "";
+    out += `<g class="grp origin-${info.origin}"><title>${esc(info.label)}${info.sub ? ` · ${esc(info.sub)}` : ""}</title>
+<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="8"/>
+<text class="gl" x="${b.x + 10}" y="${b.y + 15}">${esc(label)}<tspan class="gs" dx="8">${esc(sub)}</tspan></text>${
+      b.split !== null
+        ? `<line class="split" x1="${b.x + 8}" x2="${b.x + b.w - 8}" y1="${b.split}" y2="${b.split}"/><text class="sl" data-band="${b.band}o" x="${b.x + b.w - 8}" y="${b.split - 3}" text-anchor="end"><title>Zoom to the overrides in ${esc(g.tiers[b.band].label)}</title>@Override ↓ base</text>`
+        : ""
+    }</g>`;
+  }
   return `<g class="bands">${out}</g>`;
 }
 
@@ -981,6 +1018,14 @@ function bindEvents() {
       try { localStorage.setItem("ifsdepmap.depth", ui.depth); } catch { /* storage unavailable */ }
       renderToolbar();
       renderGraph();
+      return;
+    }
+    const show = t.closest<HTMLElement>("[data-show]");
+    if (show) {
+      ui.custOnly = show.dataset.show === "cust";
+      try { localStorage.setItem("ifsdepmap.custOnly", String(ui.custOnly)); } catch { /* storage unavailable */ }
+      renderToolbar();
+      renderGraph(true);
       return;
     }
     const jump = t.closest<HTMLElement>("[data-jump]");

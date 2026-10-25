@@ -34,6 +34,11 @@
         <button data-level="objects" aria-pressed="false">Objects</button>
       </div>
       <div class="crumbs" id="crumbs"></div>
+      <div class="selmode" id="show" role="group" aria-label="What the graph shows">
+        <span class="lbl">Show</span>
+        <button data-show="all" aria-pressed="true" title="All the code in both folders">All code</button>
+        <button data-show="cust" aria-pressed="false" title="Only what Cust touches: what's declared in Cust files, and what Cust code overrides, includes, calls or reads">Touched by Cust</button>
+      </div>
       <div class="selmode" id="selmode" role="group" aria-label="What selecting something does">
         <span class="lbl">On select</span>
         <button data-selmode="filter" aria-pressed="true" title="Show only the selection and what links to it. Select it again, or press Esc, to see everything.">Filter</button>

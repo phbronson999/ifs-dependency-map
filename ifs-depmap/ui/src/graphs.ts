@@ -13,13 +13,19 @@ interface GNode {
   overlay: boolean;
   sev: Severity | null; // worst finding touching it
   count: number;        // findings touching it
-  tier?: number;        // Objects view: semantic band (index into OBJECT_TIERS)
+  tier?: number;        // Objects / Components view: band (index into the graph's tiers)
   override?: boolean;   // Objects view: sits on the band's override row
   upper?: boolean;      // Objects view: sits on the band's upper row (views above the tables they read)
+  group?: string;       // Objects view: the file group it is drawn in (see Graph.groups)
 }
 
+/** A labelled box around the nodes of one file (or, for tables and views, one LU). */
+interface GroupInfo { label: string; sub: string; origin: Layer | "Mixed" | "Db" }
+
+interface Tier { label: string; hint: string }
+
 /** Objects view bands, top (what the user sees) to bottom (what runs on the server). */
-const OBJECT_TIERS = [
+const OBJECT_TIERS: Tier[] = [
   { label: "Client UI", hint: "pages, lists, groups, dialogs, commands, selectors" },
   { label: "Entry points", hint: "entitysets" },
   { label: "Data model", hint: "entities, queries, virtuals, structures, enumerations" },
@@ -29,6 +35,18 @@ const OBJECT_TIERS = [
   { label: "Database", hint: "tables and views read or written (from = …, SQL)" },
 ];
 const DB_TIER = 6;
+
+/** Components view bands: how much of each component is Cust's. */
+const COMPONENT_TIERS: Tier[] = [
+  { label: "Cust components", hint: "only in the Cust folder" },
+  { label: "Customised", hint: "Core components with Cust files" },
+  { label: "Used by Cust", hint: "Core only, but Cust code links to them" },
+  { label: "Core", hint: "Core only, not touched by Cust" },
+];
+
+const UNIT_EXT: Record<UnitKind, string> = {
+  client: ".client", projection: ".projection", fragment: ".fragment", plsvc: ".plsvc", package: ".plsql",
+};
 
 function objectTier(o: Obj, unitKind: UnitKind): number {
   if (o.section === null) return unitKind === "plsvc" ? 4 : 5;
@@ -49,7 +67,14 @@ interface GEdge {
   sources: number[];    // Edge ids this line stands for
 }
 
-interface Graph { nodes: GNode[]; edges: GEdge[]; truncated: number }
+interface Graph {
+  nodes: GNode[];
+  edges: GEdge[];
+  truncated: number;
+  tiers?: Tier[];                   // banded views: what each GNode.tier means
+  groups?: Map<string, GroupInfo>;  // Objects view: the boxes nodes are grouped in
+  hidden?: number;                  // left out because Cust doesn't touch them
+}
 
 const SEV_RANK: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
 const UNIT_GLYPH: Record<UnitKind, string> = {
@@ -70,6 +95,12 @@ class Model {
   edgesByUnit = new Map<string, Edge[]>();
   objectsByUnit = new Map<string, Obj[]>();
   edgesByObject = new Map<string, Edge[]>();
+  /**
+   * What Cust touches: anything declared or defined in a Cust file, and anything a link
+   * written in a Cust file points at (what Cust overrides, includes, calls or reads).
+   * Holds unit, object and relation ids, and component names.
+   */
+  touched = new Set<string>();
 
   constructor(idx: GraphIndex) {
     this.idx = idx;
@@ -83,6 +114,14 @@ class Model {
         push(this.edgesByObject, e.to, e);
       }
     }
+    const t = this.touched;
+    for (const o of idx.objects) if (idx.files[o.file].root === "Cust") t.add(o.id);
+    for (const r of idx.relations) if (r.defs.some((d) => idx.files[d.file].root === "Cust")) t.add(r.id);
+    for (const e of idx.edges) if (e.layer === "Cust") t.add(e.from).add(e.to);
+    for (const u of idx.units) if (u.origin === "Cust" || u.has_overlay) t.add(u.id);
+    for (const o of idx.objects) if (t.has(o.id)) t.add(o.unit);
+    for (const u of idx.units) if (t.has(u.id)) t.add(u.component);
+    for (const c of idx.components) if (c.has_cust) t.add(c.name);
     this.indexFindings(() => true);
   }
 
@@ -136,29 +175,41 @@ function push<K, V>(m: Map<K, V[]>, k: K, v: V) {
   else m.set(k, [v]);
 }
 
-function componentsGraph(m: Model): Graph {
-  const units = m.idx.units;
-  const nodes: GNode[] = m.idx.components
-    .filter((c) => units.some((u) => u.component === c.name))
-    .map((c) => {
-      const us = units.filter((u) => u.component === c.name);
-      const fs = m.findingsByComponent.get(c.name);
-      return {
-        id: c.name,
-        label: c.name,
-        sub: `${us.length} unit${us.length === 1 ? "" : "s"} · ${c.has_core && c.has_cust ? "Core + Cust" : c.has_core ? "Core" : "Cust"}`,
-        glyph: "COMP",
-        origin: c.has_core && c.has_cust ? "Mixed" : c.has_core ? "Core" : "Cust",
-        overlay: c.has_core && c.has_cust,
-        sev: m.worst(fs),
-        count: fs?.length ?? 0,
-      } as GNode;
-    });
+/**
+ * Components in bands by how much of each is Cust's, alphabetical within a band, with
+ * their deploy.ini description. `keep` drops components (the Cust filter).
+ */
+function componentsGraph(m: Model, keep: (id: string) => boolean = () => true): Graph {
+  const unitCount = new Map<string, number>(), custUnits = new Map<string, number>();
+  for (const u of m.idx.units) {
+    unitCount.set(u.component, (unitCount.get(u.component) ?? 0) + 1);
+    if (u.origin === "Cust" || u.has_overlay) custUnits.set(u.component, (custUnits.get(u.component) ?? 0) + 1);
+  }
+  const all = m.idx.components.filter((c) => unitCount.has(c.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const shown = all.filter((c) => keep(c.name));
+  const nodes: GNode[] = shown.map((c) => {
+    const n = unitCount.get(c.name)!, cu = custUnits.get(c.name) ?? 0;
+    const fs = m.findingsByComponent.get(c.name);
+    const tier = !c.has_core ? 0 : c.has_cust ? 1 : m.touched.has(c.name) ? 2 : 3;
+    return {
+      id: c.name,
+      label: c.name,
+      sub: `${c.description ? `${c.description} · ` : ""}${n} unit${n === 1 ? "" : "s"}${cu && c.has_core ? ` · ${cu} with Cust` : ""}`,
+      glyph: "COMP",
+      origin: c.has_core && c.has_cust ? "Mixed" : c.has_core ? "Core" : "Cust",
+      overlay: c.has_core && c.has_cust,
+      sev: m.worst(fs),
+      count: fs?.length ?? 0,
+      tier,
+      group: `tier${tier}`,
+    } as GNode;
+  });
+  const ids = new Set(nodes.map((n) => n.id));
   const agg = new Map<string, GEdge>();
   for (const e of m.idx.edges) {
     if (!["include", "uses_projection", "calls"].includes(e.kind)) continue;
     const a = m.unit(e.from).component, b = m.unit(e.to).component;
-    if (a === b) continue;
+    if (a === b || !ids.has(a) || !ids.has(b)) continue;
     const key = `${a}>${b}`;
     let g = agg.get(key);
     if (!g) {
@@ -171,7 +222,7 @@ function componentsGraph(m: Model): Graph {
   }
   const edges = [...agg.values()];
   for (const g of edges) g.label = g.count > 1 ? String(g.count) : "";
-  return { nodes, edges, truncated: 0 };
+  return { nodes, edges, truncated: 0, tiers: COMPONENT_TIERS, hidden: all.length - shown.length };
 }
 
 function unitNode(m: Model, u: Unit): GNode {
@@ -192,6 +243,7 @@ function unitNode(m: Model, u: Unit): GNode {
 function unitsGraph(
   m: Model,
   opts: { components: Set<string>; focus: Set<string>; neighbors: boolean; unitKinds: Set<string>; edgeKinds: Set<string> },
+  keep: (id: string) => boolean = () => true,
 ): Graph {
   const chosen = new Set<string>();
   for (const u of m.idx.units) {
@@ -208,17 +260,18 @@ function unitsGraph(
       }
     }
   }
-  let ids = [...chosen];
+  let ids = [...chosen].filter(keep);
+  const hidden = chosen.size - ids.length;
   let truncated = 0;
   if (ids.length > MAX_NODES) {
     truncated = ids.length - MAX_NODES;
     ids = ids.slice(0, MAX_NODES);
   }
-  const keep = new Set(ids);
+  const shown = new Set(ids);
   const nodes = ids.map((id) => unitNode(m, m.unit(id)));
   const agg = new Map<string, GEdge>();
   for (const e of m.idx.edges) {
-    if (!opts.edgeKinds.has(e.kind) || !keep.has(e.from) || !keep.has(e.to)) continue;
+    if (!opts.edgeKinds.has(e.kind) || !shown.has(e.from) || !shown.has(e.to)) continue;
     const key = `${e.from}>${e.to}>${e.kind}`;
     let g = agg.get(key);
     if (!g) {
@@ -231,7 +284,7 @@ function unitsGraph(
   }
   const edges = [...agg.values()];
   for (const g of edges) g.label = g.kind === "calls" && g.count > 1 ? `${g.count} calls` : "";
-  return { nodes, edges, truncated };
+  return { nodes, edges, truncated, hidden };
 }
 
 /**
@@ -248,7 +301,14 @@ function relationSource(m: Model, r: Relation): string {
   return d.how.startsWith("generated") ? `generated from ${file}${more}` : `${file}${more}`;
 }
 
-function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>): Graph {
+/** The LU a table or view belongs to: the stem of the file that defines it (ShopOrder.entity, ShopOrder.views → ShopOrder). */
+function relationGroup(m: Model, r: Relation): string {
+  const d = r.defs.find((x) => !x.how.startsWith("generated")) ?? r.defs[0];
+  if (!d) return "";
+  return m.file(d.file).rel_path.split("/").pop()!.replace(/\.[^.]*$/, "").replace(/-Cust$/, "");
+}
+
+function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>, keep: (id: string) => boolean = () => true): Graph {
   const seeds: string[] = [];
   for (const u of units) for (const o of m.objectsByUnit.get(u) ?? []) seeds.push(o.id);
   const order: string[] = [];
@@ -273,25 +333,39 @@ function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>): Gra
       }
     }
   }
-  let ids = order;
+  let ids = order.filter(keep);
+  const hidden = order.length - ids.length;
   let truncated = 0;
   if (ids.length > MAX_NODES) {
     truncated = ids.length - MAX_NODES;
     ids = ids.slice(0, MAX_NODES);
   }
-  const keep = new Set(ids);
+  const shown = new Set(ids);
+  const groups = new Map<string, GroupInfo>();
   const nodes: GNode[] = ids.map((id) => {
     if (id[0] === "r") {
       const r = m.relation(id);
+      const stem = relationGroup(m, r);
+      const group = `db:${stem}`;
+      if (!groups.has(group)) {
+        groups.set(group, { label: stem || "not defined in the indexed files", sub: "", origin: "Db" });
+      }
       return {
         id, label: r.name, sub: relationSource(m, r), glyph: r.kind.toUpperCase(), origin: "Db", overlay: false,
-        sev: null, count: 0, tier: DB_TIER, override: false, upper: r.kind === "view",
+        sev: null, count: 0, tier: DB_TIER, override: false, upper: r.kind === "view", group,
       };
     }
     const o = m.object(id);
     const u = m.unit(o.unit);
     const f = m.file(o.file);
     const fs = m.findingsByNode.get(id);
+    if (!groups.has(u.id)) {
+      groups.set(u.id, {
+        label: `${u.name}${UNIT_EXT[u.kind]}`,
+        sub: `${u.component} · ${u.has_overlay ? "Core + Cust" : u.origin === "Cust" ? "pure Cust" : "Core"}`,
+        origin: u.has_overlay ? "Mixed" : u.origin,
+      });
+    }
     return {
       id,
       label: o.name,
@@ -303,11 +377,21 @@ function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>): Gra
       count: fs?.length ?? 0,
       tier: objectTier(o, u.kind),
       override: !!o.modifier,
+      group: u.id,
     };
   });
+  // Name the file types a table/view group's definitions come from (ShopOrder · .entity .views).
+  for (const n of nodes) {
+    if (n.id[0] !== "r" || !n.group) continue;
+    const g = groups.get(n.group)!;
+    for (const d of m.relation(n.id).defs) {
+      const ext = m.file(d.file).rel_path.match(/\.[^./]*$/)?.[0] ?? "";
+      if (ext && !g.sub.split(" ").includes(ext)) g.sub = (g.sub ? `${g.sub} ` : "") + ext;
+    }
+  }
   const edges: GEdge[] = [];
   for (const e of m.idx.edges) {
-    if (e.from[0] === "u" || !edgeKinds.has(e.kind) || !keep.has(e.from) || !keep.has(e.to)) continue;
+    if (e.from[0] === "u" || !edgeKinds.has(e.kind) || !shown.has(e.from) || !shown.has(e.to)) continue;
     const label =
       e.kind === "overrides" ? `@${e.detail ?? "Override"}`
       : e.kind === "invokes" && e.count > 1 ? `${e.count}×`
@@ -315,5 +399,5 @@ function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>): Gra
       : "";
     edges.push({ key: `${e.id}`, from: e.from, to: e.to, kind: e.kind, layer: e.layer, count: e.count, label, sources: [e.id] });
   }
-  return { nodes, edges, truncated };
+  return { nodes, edges, truncated, tiers: OBJECT_TIERS, groups, hidden };
 }

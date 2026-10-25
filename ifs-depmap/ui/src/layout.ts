@@ -151,3 +151,142 @@ function layoutLayered(
   });
   return placed;
 }
+
+// Banded, grouped layout (Objects and Components views): each node sits in a fixed band and,
+// within it, in a group (the file it comes from) drawn as one block, with the group's
+// row-0 nodes (overrides, views) above its row-1 nodes. Groups are ordered to sit under what
+// they link to, and wrap into extra lines when a band gets wider than `maxRowWidth`.
+
+interface BandNode { id: string; w: number; h: number; band: number; row: 0 | 1; group: string }
+interface GroupBox { band: number; group: string; x: number; y: number; w: number; h: number; split: number | null }
+interface BandBox { band: number; top: number; bottom: number }
+
+function layoutBands(
+  nodes: BandNode[],
+  edges: LayoutEdge[],
+  opts: { maxRowWidth?: number; maxGroupWidth?: number; nodeGap?: number; header?: number } = {},
+): { placed: Map<string, Placed>; groups: GroupBox[]; bands: BandBox[] } {
+  const nodeGap = opts.nodeGap ?? 18;
+  const maxRowWidth = opts.maxRowWidth ?? 1500;
+  const maxGroupWidth = Math.min(opts.maxGroupWidth ?? maxRowWidth * 0.7, maxRowWidth);
+  const header = opts.header ?? 20;    // space for the group's label
+  const pad = 10;                      // inside a group's box
+  const groupGap = 26, lineGap = 26, bandGap = 64;
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const nbrs = new Map<string, string[]>();
+  for (const e of edges) {
+    const a = byId.get(e.from), b = byId.get(e.to);
+    if (!a || !b || a === b || a.band === b.band) continue;
+    (nbrs.get(a.id) ?? nbrs.set(a.id, []).get(a.id)!).push(b.id);
+    (nbrs.get(b.id) ?? nbrs.set(b.id, []).get(b.id)!).push(a.id);
+  }
+  // band → group → nodes, in first-seen order.
+  const bands = new Map<number, Map<string, BandNode[]>>();
+  for (const n of nodes) {
+    const groups = bands.get(n.band) ?? bands.set(n.band, new Map()).get(n.band)!;
+    (groups.get(n.group) ?? groups.set(n.group, []).get(n.group)!).push(n);
+  }
+  const bandOrder = [...bands.keys()].sort((a, b) => a - b);
+  const order = new Map<number, string[]>();   // band → group order
+  for (const b of bandOrder) order.set(b, [...bands.get(b)!.keys()]);
+  const xpos = new Map<string, number>();      // normalized 0..1 across the band
+
+  /** Rows of one group, wrapped to the group width: [[row0 lines], [row1 lines]]. */
+  const rowsOf = (list: BandNode[]) => {
+    const out: BandNode[][] = [];
+    for (const row of [0, 1] as const) {
+      let line: BandNode[] = [], w = 0;
+      for (const n of list.filter((x) => x.row === row)) {
+        if (line.length && w + n.w > maxGroupWidth) { out.push(line); line = []; w = 0; }
+        line.push(n);
+        w += n.w + nodeGap;
+      }
+      if (line.length) out.push(line);
+    }
+    return out;
+  };
+  const groupWidth = (list: BandNode[]) =>
+    Math.max(...rowsOf(list).map((l) => l.reduce((s, n) => s + n.w, 0) + nodeGap * (l.length - 1))) + pad * 2;
+
+  const setX = (b: number) => {
+    const groups = bands.get(b)!, ids = order.get(b)!;
+    let total = 0;
+    const spans: [string, number, number][] = [];
+    for (const g of ids) { const w = groupWidth(groups.get(g)!); spans.push([g, total, w]); total += w + groupGap; }
+    for (const [g, x0, w] of spans) {
+      const list = groups.get(g)!;
+      list.forEach((n, i) => xpos.set(n.id, (x0 + (w * (i + 0.5)) / list.length) / Math.max(total, 1)));
+    }
+  };
+  bandOrder.forEach(setX);
+  const bary = (ids: string[], fallback: number) => {
+    let s = 0, c = 0;
+    for (const id of ids) for (const m of nbrs.get(id) ?? []) { s += xpos.get(m) ?? 0.5; c++; }
+    return c ? s / c : fallback;
+  };
+  for (let sweep = 0; sweep < 6; sweep++) {
+    const seq = sweep % 2 === 0 ? bandOrder : [...bandOrder].reverse();
+    for (const b of seq) {
+      const groups = bands.get(b)!;
+      const gb = new Map<string, number>();
+      for (const g of order.get(b)!) {
+        const list = groups.get(g)!;
+        const own = list.reduce((s, n) => s + (xpos.get(n.id) ?? 0.5), 0) / list.length;
+        gb.set(g, bary(list.map((n) => n.id), own));
+        list.sort((p, q) => bary([p.id], xpos.get(p.id)!) - bary([q.id], xpos.get(q.id)!));
+      }
+      order.get(b)!.sort((p, q) => gb.get(p)! - gb.get(q)!);
+      setX(b);
+    }
+  }
+
+  // Coordinates.
+  const placed = new Map<string, Placed>();
+  const boxes: GroupBox[] = [];
+  const bandBoxes: BandBox[] = [];
+  let y = 0;
+  bandOrder.forEach((b, bi) => {
+    const groups = bands.get(b)!;
+    const blocks = order.get(b)!.map((g) => {
+      const rows = rowsOf(groups.get(g)!);
+      const w = groupWidth(groups.get(g)!);
+      const h = header + pad + rows.reduce((s, l) => s + Math.max(...l.map((n) => n.h)), 0) + nodeGap * (rows.length - 1) + pad;
+      return { g, rows, w, h };
+    });
+    // Wrap blocks into lines.
+    const lines: (typeof blocks)[] = [[]];
+    let lw = 0;
+    for (const bl of blocks) {
+      if (lines[lines.length - 1].length && lw + bl.w > maxRowWidth) { lines.push([]); lw = 0; }
+      lines[lines.length - 1].push(bl);
+      lw += bl.w + groupGap;
+    }
+    const top = y;
+    for (const line of lines) {
+      const width = line.reduce((s, bl) => s + bl.w, 0) + groupGap * (line.length - 1);
+      const lh = Math.max(...line.map((bl) => bl.h));
+      let x = -width / 2;
+      for (const bl of line) {
+        let ry = y + header + pad, split: number | null = null;
+        bl.rows.forEach((row, ri) => {
+          const rh = Math.max(...row.map((n) => n.h));
+          if (ri > 0 && row[0].row === 1 && bl.rows[ri - 1][0].row === 0) split = ry - nodeGap / 2;
+          const rw = row.reduce((s, n) => s + n.w, 0) + nodeGap * (row.length - 1);
+          let nx = x + (bl.w - rw) / 2;
+          for (const n of row) {
+            placed.set(n.id, { x: nx + n.w / 2, y: ry + rh / 2, w: n.w, h: n.h, layer: bi });
+            nx += n.w + nodeGap;
+          }
+          ry += rh + nodeGap;
+        });
+        boxes.push({ band: b, group: bl.g, x, y, w: bl.w, h: bl.h, split });
+        x += bl.w + groupGap;
+      }
+      y += lh + lineGap;
+    }
+    bandBoxes.push({ band: b, top, bottom: y - lineGap });
+    y += bandGap - lineGap;
+  });
+  return { placed, groups: boxes, bands: bandBoxes };
+}
