@@ -1,0 +1,20 @@
+-----------------------------------------------------------------------------
+--  Logical unit: ShopOrder
+--  Component:    SHPORD
+-----------------------------------------------------------------------------
+layer Core;
+
+COLUMN Part_Description IS
+   Flags      = 'A----'
+   Datatype   = 'STRING(200)'
+   Prompt     = 'Part Description';
+
+-- The generated SHOP_ORD view comes from ShopOrder.entity; this one is written by hand.
+@SecurityCheck Site.UserAuthorized(s.contract)
+VIEW Shop_Order_Overview IS
+   Prompt = 'Shop Order; with lines'
+SELECT s.order_no                                                 order_no,
+       l.line_no                                                  line_no,
+       Shop_Order_API.Get_Part_Description(s.contract, l.part_no) part_description
+FROM   shop_ord s, shop_order_line l
+WHERE  s.order_no = l.order_no;

@@ -55,11 +55,14 @@ The Objects view follows these links downward as far as they go:
 | action/function → .plsvc method | IFS naming: `ReleaseOrder` → `Release_Order___` |
 | method → method | `Xxx_API.Method(...)`, same-package `Method___(...)`, and `fetch = "Xxx_API.M(...)"` |
 | override → base | `@Override` / `@Overtake` |
-| entity/query/method → table or view | `from = "view"`, `FROM` / `JOIN` / `UPDATE` / `INSERT INTO` in SQL |
+| entity/query/method → table or view | `from = "view"`, `FROM` / `JOIN` / `UPDATE` / `INSERT INTO` in SQL (including `FROM a x, b y` lists) |
+| view → table or view, method | the view's `SELECT` in a `.views` file |
+| generated view → generated table | the `.entity`: the LU name in snake case, plus `_TAB`, unless `DB_VIEW_NAME` / `DB_TABLE_NAME` rename them (none for `abstract` LUs) |
 
 A call into a method that Cust overrides lands on the override, then follows
-`@Override` to the Core base. Tables and views are names only until `.views` and
-`.storage` are indexed.
+`@Override` to the Core base. Each table and view shows where it is defined: a
+`.views` or `.storage` statement (`TABLE`, `TEMPORARY TABLE`), or the `.entity` it
+is generated from.
 
 ## Layout
 
@@ -80,7 +83,7 @@ src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 ## Running
 
 ```sh
-cargo test                                         # 27 tests
+cargo test                                         # 31 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli
@@ -93,7 +96,9 @@ The desktop app remembers the two folders. "Open" on any file runs
 
 ## Not done yet
 
-- `.entity` / `.enumeration` (XML) parsing. Needs a real sample file.
-- `.views` and `.storage`.
+- The rest of `.entity` (attributes, references, state machine) and `.enumeration`.
+  Only the table and view names are read so far.
+- Tables generated for projection `virtual`s (`*_VRT`) and `WITH` subquery names,
+  which show up as undefined relations.
 - `lov X with ReferenceYSelector` links.
 - Persisted index with incremental rescans (indexing is fast enough to run in full for now: about 0.2 s for 6,000 files).

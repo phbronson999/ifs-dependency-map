@@ -15,6 +15,12 @@ pub enum FileKind {
     Plsvc,
     Plsql,
     DeployIni,
+    /// LU model (XML): only the table and view names are read.
+    Entity,
+    /// `VIEW x IS SELECT ...` definitions.
+    Views,
+    /// `TABLE x IS (...)` definitions, indexes and sequences.
+    Storage,
 }
 
 impl FileKind {
@@ -29,6 +35,9 @@ impl FileKind {
             "fragment" => Some(Self::Fragment),
             "plsvc" => Some(Self::Plsvc),
             "plsql" => Some(Self::Plsql),
+            "entity" => Some(Self::Entity),
+            "views" => Some(Self::Views),
+            "storage" => Some(Self::Storage),
             _ => None,
         }
     }
@@ -176,8 +185,18 @@ pub struct Edge {
 pub struct Relation {
     pub id: String,
     pub name: String,
-    /// `table` for `*_TAB`, otherwise `view`.
+    /// `table` or `view`: from where it is defined, else `table` for `*_TAB`.
     pub kind: String,
+    /// Where it is defined: a `.views` / `.storage` statement, or the `.entity` it is generated from.
+    pub defs: Vec<RelationDef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelationDef {
+    pub file: usize,
+    pub line: usize,
+    /// `view`, `view (@Override)`, `table`, `temporary table`, `generated view` or `generated table`.
+    pub how: String,
 }
 
 #[derive(Debug, Clone)]

@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 34);
+    assert_eq!(idx.stats.files, 40);
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
 }
 
@@ -289,6 +289,52 @@ fn json_is_well_formed_enough_for_the_ui() {
     assert!(s.contains("\"kind\":\"implicit_include\""));
 }
 
+fn relation<'a>(idx: &'a Index, name: &str) -> &'a Relation {
+    idx.relations.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("relation {name} not found"))
+}
+
+/// What a relation reads (other relations) or calls (methods), by name.
+fn reads_of(idx: &Index, name: &str) -> Vec<String> {
+    let id = &relation(idx, name).id;
+    let mut v: Vec<String> = idx
+        .edges
+        .iter()
+        .filter(|e| &e.from == id)
+        .map(|e| if e.to.starts_with('r') { idx.relations[id_index(&e.to)].name.clone() } else { idx.objects[id_index(&e.to)].name.clone() })
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+#[test]
+fn views_lead_to_their_tables() {
+    let idx = fixtures();
+    let defs = |name: &str| -> Vec<String> {
+        relation(&idx, name).defs.iter().map(|d| format!("{} {}:{}", d.how, idx.files[d.file].rel_path.rsplit('/').next().unwrap(), d.line)).collect()
+    };
+
+    // ShopOrder.entity renames both: its view SHOP_ORD reads SHOP_ORDER_TAB, not SHOP_ORD_TAB.
+    assert_eq!(defs("SHOP_ORD"), ["generated view ShopOrder.entity:5"]);
+    assert_eq!(relation(&idx, "SHOP_ORD").kind, "view");
+    assert_eq!(reads_of(&idx, "SHOP_ORD"), ["SHOP_ORDER_TAB"]);
+    assert_eq!(defs("SHOP_ORDER_TAB"), ["generated table ShopOrder.entity:6"]);
+    assert!(idx.relations.iter().all(|r| r.name != "SHOP_ORD_TAB"));
+
+    // ShopOrderLine.entity uses the defaults ("make-company-abstract" is not "abstract").
+    assert_eq!(defs("SHOP_ORDER_LINE"), ["generated view ShopOrderLine.entity:8"]);
+    assert_eq!(reads_of(&idx, "SHOP_ORDER_LINE"), ["SHOP_ORDER_LINE_TAB"]);
+
+    // The hand-written view reads both relations in its FROM list and calls a package; the Cust
+    // override adds the customer's notes table.
+    assert_eq!(defs("SHOP_ORDER_OVERVIEW"), ["view ShopOrder.views:14", "view (@Override) ShopOrder-Cust.views:5"]);
+    assert_eq!(reads_of(&idx, "SHOP_ORDER_OVERVIEW"), ["Get_Part_Description", "SHOP_ORD", "SHOP_ORDER_LINE", "TI_SHOP_ORDER_NOTE_TAB"]);
+
+    // A table defined in .storage, and one generated for a pure Cust LU.
+    assert_eq!(defs("SHOP_ORDER_HIST_TAB"), ["table ShopOrder.storage:5"]);
+    assert_eq!(defs("TI_QUALITY_CHECKS_TAB"), ["generated table TiQualityChecks-Cust.entity:3"]);
+}
+
 #[test]
 fn findings_show_how_they_were_reached() {
     let idx = fixtures();
@@ -369,7 +415,7 @@ fn objects_link_all_the_way_down_to_tables() {
     // fetch = "Shop_Order_API.Get_Part_Description(...)" and from = "shop_ord".
     let entity = object(&idx, "ShopOrderHandling", "ShopOrder", false);
     let chain = reach(&idx, &entity.id);
-    for step in ["view SHOP_ORD", "function Get_Part_Description", "function Get_Description", "table INVENTORY_PART_TAB"] {
+    for step in ["view SHOP_ORD", "table SHOP_ORDER_TAB", "function Get_Part_Description", "function Get_Description", "table INVENTORY_PART_TAB"] {
         assert!(chain.iter().any(|c| c == step), "missing {step} in {chain:?}");
     }
 }

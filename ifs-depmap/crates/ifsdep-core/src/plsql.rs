@@ -239,19 +239,51 @@ pub fn parse(text: &str) -> ParsedPlsql {
 /// Scans SQL for the object after FROM / JOIN / UPDATE / INSERT INTO / MERGE INTO.
 /// IFS variables end in `_` (`newrec_`), so names ending in `_` are skipped, which
 /// also filters `EXTRACT(YEAR FROM date_)` and similar.
+/// Relations read or written in already-cleaned SQL, upper-cased, with their lines.
+pub fn relations(cleaned: &str) -> Vec<(String, usize)> {
+    relations_in(cleaned, &[]).into_iter().map(|r| (r.relation, r.line)).collect()
+}
+
+/// Words that end a `FROM a x, b y` list.
+const FROM_LIST_END: &[&str] = &[
+    "WHERE", "GROUP", "ORDER", "HAVING", "CONNECT", "START", "UNION", "MINUS", "INTERSECT", "FETCH", "FOR",
+    "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "NATURAL", "ON", "USING", "SET", "VALUES", "RETURNING", "WHEN",
+    "THEN", "ELSE", "END", "BEGIN", "LOOP", "INTO", "SELECT", "PIVOT", "UNPIVOT", "WITH",
+];
+
 fn relations_in(cleaned: &str, methods: &[Method]) -> Vec<Read> {
     let mut out = Vec::new();
     let mut prev = String::new();
     let mut expect = false;
     let mut after_into = false; // `INSERT INTO t (cols)`: a `(` after the name is a column list
+    // Open `FROM a x, b y, ...` lists, by parenthesis depth (a subquery in the list opens its
+    // own). A comma at the innermost list's depth starts the next relation.
+    let mut from_lists: Vec<i32> = Vec::new();
+    let mut depth: i32 = 0;
     for (i, line) in cleaned.lines().enumerate() {
         let line_no = i + 1;
         let mut j = 0;
         while j < line.len() {
             let c = line[j..].chars().next().unwrap();
             if !is_ident(c) {
-                if c == '(' {
-                    expect = false; // subquery or function call, not a relation name
+                match c {
+                    '(' => {
+                        expect = false; // subquery or function call, not a relation name
+                        depth += 1;
+                    }
+                    ')' => {
+                        depth -= 1;
+                        while from_lists.last().is_some_and(|&d| d > depth) {
+                            from_lists.pop();
+                        }
+                    }
+                    ',' if from_lists.last() == Some(&depth) => expect = true,
+                    ';' => {
+                        from_lists.clear();
+                        expect = false;
+                        depth = 0;
+                    }
+                    _ => {}
                 }
                 j += c.len_utf8();
                 continue;
@@ -273,8 +305,22 @@ fn relations_in(cleaned: &str, methods: &[Method]) -> Vec<Read> {
                 }
             }
             after_into = false;
+            if FROM_LIST_END.contains(&upper.as_str()) && from_lists.last() == Some(&depth) {
+                from_lists.pop();
+            }
             match upper.as_str() {
-                "FROM" | "JOIN" => expect = true,
+                "FROM" => {
+                    expect = true;
+                    if from_lists.last() != Some(&depth) {
+                        from_lists.push(depth);
+                    }
+                }
+                "JOIN" => {
+                    expect = true;
+                    if from_lists.last() == Some(&depth) {
+                        from_lists.pop();
+                    }
+                }
                 "UPDATE" if prev != "FOR" => expect = true,
                 "INTO" if prev == "INSERT" || prev == "MERGE" => {
                     expect = true;
@@ -400,6 +446,18 @@ mod tests {
         let r: Vec<_> = p.reads.iter().map(|r| r.relation.as_str()).collect();
         assert_eq!(r, ["SHOP_ORDER_TAB", "USER_ALLOWED_SITE_PUB", "SHOP_ORDER_TAB", "SHOP_ORDER_HIST_TAB"]);
         assert!(p.reads.iter().all(|r| r.in_method == Some(0)));
+    }
+
+    #[test]
+    fn comma_separated_from_lists() {
+        let src = "SELECT a.x, NVL(b.y, 0), Some_API.Get(a.z, b.w)\n\
+                   FROM   shop_ord_tab a, shop_order_operation_tab b,\n       (SELECT 1 c FROM dual) d, work_center_tab w\n\
+                   WHERE  a.order_no = b.order_no AND x IN (1, 2);\n\
+                   SELECT q FROM part_tab p WHERE p.a = 1 ORDER BY 1, 2;\n";
+        let r = relations(&blank_comments_and_strings(src));
+        let names: Vec<&str> = r.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["SHOP_ORD_TAB", "SHOP_ORDER_OPERATION_TAB", "WORK_CENTER_TAB", "PART_TAB"]);
+        assert_eq!(r[2].1, 3);
     }
 
     #[test]

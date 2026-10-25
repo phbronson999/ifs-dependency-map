@@ -15,6 +15,7 @@ interface GNode {
   count: number;        // findings touching it
   tier?: number;        // Objects view: semantic band (index into OBJECT_TIERS)
   override?: boolean;   // Objects view: sits on the band's override row
+  upper?: boolean;      // Objects view: sits on the band's upper row (views above the tables they read)
 }
 
 /** Objects view bands, top (what the user sees) to bottom (what runs on the server). */
@@ -238,6 +239,15 @@ function unitsGraph(
  * as far as the links go (nearest first, so a cap drops the deepest), plus one
  * step up to show what uses the chosen objects.
  */
+/** Where a table or view comes from, in a few words: the file that defines or generates it. */
+function relationSource(m: Model, r: Relation): string {
+  const d = r.defs[0];
+  if (!d) return "not defined in the indexed files";
+  const file = m.file(d.file).rel_path.split("/").pop();
+  const more = r.defs.length > 1 ? ` +${r.defs.length - 1}` : "";
+  return d.how.startsWith("generated") ? `generated from ${file}${more}` : `${file}${more}`;
+}
+
 function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>): Graph {
   const seeds: string[] = [];
   for (const u of units) for (const o of m.objectsByUnit.get(u) ?? []) seeds.push(o.id);
@@ -274,8 +284,8 @@ function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>): Gra
     if (id[0] === "r") {
       const r = m.relation(id);
       return {
-        id, label: r.name, sub: "not indexed yet", glyph: r.kind.toUpperCase(), origin: "Db", overlay: false,
-        sev: null, count: 0, tier: DB_TIER, override: false,
+        id, label: r.name, sub: relationSource(m, r), glyph: r.kind.toUpperCase(), origin: "Db", overlay: false,
+        sev: null, count: 0, tier: DB_TIER, override: false, upper: r.kind === "view",
       };
     }
     const o = m.object(id);
@@ -297,11 +307,11 @@ function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>): Gra
   });
   const edges: GEdge[] = [];
   for (const e of m.idx.edges) {
-    if (e.from[0] !== "o" || !edgeKinds.has(e.kind) || !keep.has(e.from) || !keep.has(e.to)) continue;
+    if (e.from[0] === "u" || !edgeKinds.has(e.kind) || !keep.has(e.from) || !keep.has(e.to)) continue;
     const label =
       e.kind === "overrides" ? `@${e.detail ?? "Override"}`
       : e.kind === "invokes" && e.count > 1 ? `${e.count}×`
-      : e.kind === "reads" && e.detail === "from" ? "from"
+      : e.kind === "reads" && (e.detail === "from" || e.detail === "generated") ? e.detail
       : "";
     edges.push({ key: `${e.id}`, from: e.from, to: e.to, kind: e.kind, layer: e.layer, count: e.count, label, sources: [e.id] });
   }

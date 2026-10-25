@@ -1,0 +1,12 @@
+layer Core;
+
+INDEX shop_order_ix1 IS shop_order_tab (contract, rowstate);
+
+TABLE shop_order_hist_tab IS
+      ( order_no                        VARCHAR2(12)     NOT NULL,
+        history_no                      NUMBER           NOT NULL,
+        rowversion                      DATE             NOT NULL);
+
+PRIMARY KEY shop_order_hist_pk IS shop_order_hist_tab (order_no, history_no);
+
+SEQUENCE shop_order_hist_seq IS MAXVALUE 999999999999 INCREMENT BY 1 START WITH 1 NOCACHE;

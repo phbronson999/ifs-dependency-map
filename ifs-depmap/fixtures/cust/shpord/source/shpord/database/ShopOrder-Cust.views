@@ -1,0 +1,9 @@
+layer Cust;
+
+-- Adds the customer's notes to the overview.
+@Override
+VIEW Shop_Order_Overview IS
+SELECT s.order_no order_no,
+       n.note     ti_note
+FROM   shop_ord s
+       LEFT JOIN ti_shop_order_note_tab n ON n.order_no = s.order_no;

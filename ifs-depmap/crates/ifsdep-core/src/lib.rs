@@ -12,7 +12,9 @@
 
 pub mod analyze;
 pub mod build;
+pub mod db;
 pub mod deployini;
+pub mod entity;
 pub mod graph;
 pub mod json;
 pub mod marble;

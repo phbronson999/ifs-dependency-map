@@ -49,7 +49,13 @@ interface Obj {
 }
 
 /** A table or view named in `from = "…"` or SQL; name only until .views is indexed. */
-interface Relation { id: string; name: string; kind: "table" | "view" }
+interface Relation {
+  id: string;
+  name: string;
+  kind: "table" | "view";
+  /** Where it is defined: a .views / .storage statement, or the .entity it is generated from. */
+  defs: { file: number; line: number; how: string }[];
+}
 
 interface Edge {
   id: number;

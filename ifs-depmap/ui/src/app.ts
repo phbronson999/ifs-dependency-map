@@ -359,7 +359,7 @@ function renderGraph(fit = false) {
     {
       maxRowWidth: Math.max(900, ($("canvas").clientWidth || 900) * 1.6),
       // Objects sit in fixed bands; within a band, overrides go on the row above their base.
-      fixedLayers: banded ? new Map(g.nodes.map((n) => [n.id, (n.tier ?? 0) * 2 + (n.override ? 0 : 1)])) : undefined,
+      fixedLayers: banded ? new Map(g.nodes.map((n) => [n.id, (n.tier ?? 0) * 2 + (n.override || n.upper ? 0 : 1)])) : undefined,
       layerGap: banded ? 84 : 70,
     },
   );
@@ -771,18 +771,27 @@ ${findingLinks(m.findingsByNode.get(id) ?? [])}
 
 function relationHtml(m: Model, id: string) {
   const r = m.relation(id);
-  const users = (m.edgesByObject.get(id) ?? []).filter((e) => e.to === id);
+  const links = m.edgesByObject.get(id) ?? [];
+  const users = links.filter((e) => e.to === id);
+  const reads = links.filter((e) => e.from === id);
+  const how: Record<string, string> = {
+    "generated view": "Generated from the entity (the view every LU gets)",
+    "generated table": "Generated from the entity (the LU's table)",
+    view: "Written by hand in a .views file",
+    table: "Defined in a .storage file",
+    "temporary table": "A temporary table, defined in a .storage file",
+  };
+  const defs = r.defs.length
+    ? r.defs.map((d) => `<p>${esc(how[d.how] ?? d.how)}</p>${fileLine(d.file, d.line)}`).join("")
+    : `<p style="color:var(--muted)">Not defined in the indexed files: probably owned by a component outside these folders, or by the framework.</p>`;
+  const link = (other: string, e: Edge) =>
+    nodeLink(other).replace("</span></button>", `${e.count > 1 ? ` <span class="mono" style="color:var(--muted)">· ${e.count}×</span>` : ""}</span></button>`);
   return `<div class="d">
 <div class="eyebrow"><span>${r.kind}</span><span class="pill plain">database</span></div>
 <h3>${esc(r.name)}</h3>
-<p style="color:var(--muted)">Known by name only: .views and .storage aren't indexed yet, so this can't be opened or traced further.</p>
-<section><h4>Read or written by (${users.length})</h4><div class="linklist">${users
-    .map((e) => {
-      const o = m.object(e.from);
-      return `<button data-action="goto" data-node="${o.id}"><span class="k">${o.kind}</span><span class="n">${esc(o.name)} <span class="mono" style="color:var(--muted)">in ${esc(m.unit(o.unit).name)}${e.count > 1 ? ` · ${e.count}×` : ""}</span></span></button>`;
-    })
-    .join("")}</div></section>
-<section><h4>First use</h4>${users[0] ? fileLine(users[0].file, users[0].line) : ""}</section>
+<section><h4>Defined</h4>${defs}</section>
+${reads.length ? `<section><h4>Reads and calls (${reads.length})</h4><div class="linklist">${reads.map((e) => link(e.to, e)).join("")}</div></section>` : ""}
+<section><h4>Read or written by (${users.length})</h4><div class="linklist">${users.map((e) => link(e.from, e)).join("")}</div></section>
 </div>`;
 }
 
@@ -807,6 +816,20 @@ function selectFinding(id: string) {
   renderAll(true);
 }
 
+/** Files whose declarations read a table or view, directly or through views that read it. */
+function relationUserUnits(m: Model, id: string): Set<string> {
+  const units = new Set<string>();
+  const queue = [id], seen = new Set(queue);
+  for (let i = 0; i < queue.length && units.size < 12; i++) {
+    for (const e of m.edgesByObject.get(queue[i]) ?? []) {
+      if (e.to !== queue[i]) continue;
+      if (e.from[0] === "o") units.add(m.object(e.from).unit);
+      else if (e.from[0] === "r" && !seen.has(e.from)) { seen.add(e.from); queue.push(e.from); }
+    }
+  }
+  return units;
+}
+
 function gotoNode(id: string) {
   const m = ui.model!;
   if (id[0] === "u") {
@@ -824,7 +847,7 @@ function gotoNode(id: string) {
   } else if (id[0] === "r") {
     if (!(ui.level === "objects" && ui.graph?.nodes.some((n) => n.id === id))) {
       ui.level = "objects";
-      ui.objUnits = new Set((m.edgesByObject.get(id) ?? []).filter((e) => e.to === id).map((e) => m.object(e.from).unit));
+      ui.objUnits = relationUserUnits(m, id);
     }
   } else {
     ui.level = "components";

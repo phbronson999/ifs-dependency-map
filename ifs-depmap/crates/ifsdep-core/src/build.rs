@@ -1,5 +1,7 @@
 use crate::analyze;
+use crate::db;
 use crate::deployini::{self, DeployIni};
+use crate::entity;
 use crate::marble::{self, ParsedMarble, RefKind};
 use crate::model::*;
 use crate::plsql::{self, ParsedPlsql};
@@ -18,6 +20,8 @@ enum Parsed {
     Marble(ParsedMarble),
     Plsql(ParsedPlsql),
     Deploy(DeployIni),
+    Db(db::ParsedDb),
+    Entity(entity::ParsedEntity),
 }
 
 const ENTITY_LIKE: &[&str] = &["entity", "query", "virtual", "structure", "summary", "singleton"];
@@ -84,11 +88,15 @@ pub fn index(opts: &IndexOptions) -> Index {
                 }
                 FileKind::Plsvc | FileKind::Plsql => Parsed::Plsql(plsql::parse(&text)),
                 FileKind::DeployIni => Parsed::Deploy(deployini::parse(&text)),
+                FileKind::Views | FileKind::Storage => Parsed::Db(db::parse(&text)),
+                FileKind::Entity => Parsed::Entity(entity::parse(&text)),
             };
             let (hdr_component, hdr_layer) = match &p {
                 Parsed::Marble(m) => (m.component.clone(), m.layer.clone()),
                 Parsed::Plsql(p) => (p.component.clone(), p.layer.clone()),
                 Parsed::Deploy(d) => (d.component.clone(), None),
+                Parsed::Db(d) => (None, d.layer.clone()),
+                Parsed::Entity(e) => (e.component.clone(), e.layer.clone()),
             };
             let component = hdr_component
                 .or_else(|| s.path_component.clone())
@@ -216,7 +224,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                     });
                 }
             }
-            Parsed::Deploy(_) => {}
+            Parsed::Deploy(_) | Parsed::Db(_) | Parsed::Entity(_) => {}
         }
     }
 
@@ -303,7 +311,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                     push_edge(&mut edges, e);
                 }
             }
-            Parsed::Deploy(_) => {}
+            Parsed::Deploy(_) | Parsed::Db(_) | Parsed::Entity(_) => {}
         }
     }
 
@@ -492,7 +500,8 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
     }
 
-    // Database relations (name only for now).
+    // Database relations: tables and views, by upper-cased name. Where each is defined is
+    // filled in from .views, .storage and .entity files further down.
     let mut relations: Vec<Relation> = Vec::new();
     let mut rel_map: HashMap<String, usize> = HashMap::new();
     let mut rel_id = |name: &str| -> String {
@@ -502,6 +511,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                 id: format!("r{}", relations.len()),
                 kind: if key.ends_with("_TAB") { "table".into() } else { "view".into() },
                 name: key.clone(),
+                defs: Vec::new(),
             });
             relations.len() - 1
         });
@@ -676,6 +686,73 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
     }
 
+    // Views and tables: where each is defined, and what each view reads.
+    let mut rel_defs: Vec<(String, RelationDef)> = Vec::new();
+    // Each LU's generated view reads its generated table. A Cust entity's rename wins over
+    // the Core one's; otherwise the names are the defaults (LU in snake case, plus _TAB).
+    let mut entities: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for fi in 0..idx.files.len() {
+        if let Parsed::Entity(entity::ParsedEntity { name: Some((lu, _)), .. }) = &parsed[fi] {
+            entities.entry(lu.to_ascii_uppercase()).or_default().push(fi);
+        }
+    }
+    let ent = |fi: usize| match &parsed[fi] {
+        Parsed::Entity(e) => e,
+        _ => unreachable!("only entity files are grouped"),
+    };
+    for files in entities.values() {
+        // An abstract LU has no generated table; its view is written in a .views file. The
+        // property is a comma-separated list (`micro-cache-array,make-company-abstract` is not abstract).
+        let is_abstract = |f: usize| ent(f).implementation.as_deref().is_some_and(|i| i.split(',').any(|t| t.trim() == "abstract"));
+        if files.iter().any(|&f| is_abstract(f)) {
+            continue;
+        }
+        let core = files.iter().copied().find(|&f| idx.files[f].root == Layer::Core);
+        let cust = files.iter().copied().find(|&f| idx.files[f].root == Layer::Cust);
+        let base = core.or(cust).expect("a group has at least one file");
+        let pick = |view: bool| {
+            [cust, core].into_iter().flatten().find_map(|f| entity_rename(ent(f), view).clone().map(|(n, l)| (n, f, l)))
+        };
+        let (lu, lu_line) = ent(base).name.clone().expect("grouped by name");
+        let (view, vfile, vline) = pick(true).unwrap_or((plsql::snake_name(&lu).to_ascii_uppercase(), base, lu_line));
+        let (table, tfile, tline) = pick(false).unwrap_or((format!("{view}_TAB"), base, lu_line));
+        let (vid, tid) = (rel_id(&view), rel_id(&table));
+        rel_defs.push((vid.clone(), RelationDef { file: vfile, line: vline, how: "generated view".into() }));
+        rel_defs.push((tid.clone(), RelationDef { file: tfile, line: tline, how: "generated table".into() }));
+        let mut e = edge(vid, tid, EdgeKind::Reads, tfile, tline, idx.files[tfile].root);
+        e.detail = Some("generated".into());
+        push_edge(&mut edges, e);
+    }
+    for fi in 0..idx.files.len() {
+        let Parsed::Db(d) = &parsed[fi] else { continue };
+        let layer = idx.files[fi].root;
+        for t in &d.tables {
+            let how = if t.temporary { "temporary table" } else { "table" };
+            rel_defs.push((rel_id(&t.name), RelationDef { file: fi, line: t.line, how: how.into() }));
+        }
+        for v in &d.views {
+            let vid = rel_id(&v.name);
+            let how = v.modifier.as_ref().map_or("view".to_string(), |m| format!("view (@{m})"));
+            rel_defs.push((vid.clone(), RelationDef { file: fi, line: v.line, how }));
+            for (r, line) in &v.reads {
+                if *r != v.name {
+                    push_edge(&mut edges, edge(vid.clone(), rel_id(r), EdgeKind::Reads, fi, *line, layer));
+                }
+            }
+            let mut calls: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+            for (pkg, method, line) in &v.calls {
+                if let Some(t) = package_method(&format!("{pkg}.{method}"), layer) {
+                    calls.entry(t).or_insert((0, *line)).0 += 1;
+                }
+            }
+            for (t, (count, line)) in calls {
+                let mut e = edge(vid.clone(), idx.objects[t].id.clone(), EdgeKind::Invokes, fi, line, layer);
+                e.count = count;
+                push_edge(&mut edges, e);
+            }
+        }
+    }
+
     // entityset for / client constructs bound to projection objects.
     for oi in 0..idx.objects.len() {
         let o = idx.objects[oi].clone();
@@ -699,6 +776,11 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
     }
     idx.edges = edges;
+    for (id, d) in rel_defs {
+        let r = &mut relations[id_index(&id)];
+        r.kind = if d.how.contains("view") { "view" } else { "table" }.into();
+        r.defs.push(d);
+    }
     idx.relations = relations;
 
     // 6. Components and deploy.ini connections.
@@ -756,6 +838,15 @@ pub fn index(opts: &IndexOptions) -> Index {
     idx.stats.edges = idx.edges.len();
     idx.stats.millis = start.elapsed().as_millis();
     idx
+}
+
+/// The entity's own view name (`DB_VIEW_NAME`) or table name (`DB_TABLE_NAME`), if it sets one.
+fn entity_rename(e: &entity::ParsedEntity, view: bool) -> &Option<(String, usize)> {
+    if view {
+        &e.view
+    } else {
+        &e.table
+    }
 }
 
 fn unresolved_finding(idx: &Index, file: usize, line: usize, what: &str, name: &str, from: &str) -> Finding {

@@ -26,7 +26,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - `src-tauri/` Tauri 2 shell: `pick_folder`, `index_folders`, `open_in_editor` (`code -g`)
 
 ## Commands
-- `cargo test` (27 tests, must stay green)
+- `cargo test` (31 tests, must stay green)
 - `cargo run --release --bin ifsdep -- --core <dir> --cust <dir> --json out.json [--strict]`
 - `npm install`, then `npm run tauri dev` / `npm run demo` (builds ui/dist/demo.html)
 
@@ -42,7 +42,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - Other names (calls, references, bindings) resolve in the same unit, then what it includes,
   then what a client/projection it ends up in includes. Never anywhere.
 - Calls into an overridden method land on the override, then follow Overrides to the base.
-- Objects view follows links downward to tables/views (names only until .views is parsed).
+- Objects view follows links downward to tables/views, and views to the tables they read.
 - The tool is read-only: it suggests fixes but never writes to IFS files.
 
 ## Status and assumptions to verify against real code
@@ -52,7 +52,8 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - Assumed: [Connections] from a component's Core and Cust deploy.ini are combined.
 - Assumed: projection action `DoIt` is implemented by `.plsvc` method `Do_It___`.
 - Component = header `component X;`, else the first folder under the root.
-- Not parsed yet: `.entity` / `.enumeration` / `.utility` (XML), `.views`, `.storage`.
+- `.views` / `.storage` are parsed for definitions and reads; `.entity` only for the view and
+  table names. Not parsed yet: the rest of `.entity`, `.enumeration`, `.utility`.
 
 ## Rules for working here
 - NEVER write, move or delete anything under `C:\devstudio\project-parent-25r1`. Read only.

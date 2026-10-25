@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ENTITY xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:ifsworld-com:schemas:entity_entity">
+   <NAME>TiQualityChecks</NAME>
+   <COMPONENT>TIQUAL</COMPONENT>
+   <LAYER>Cust</LAYER>
+</ENTITY>

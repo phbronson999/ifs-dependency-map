@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ENTITY xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:ifsworld-com:schemas:entity_entity">
+   <CODE_GENERATION_PROPERTIES>
+      <CODE_GENERATION_PROPERTIES>
+         <DB_IMPLEMENTATION>micro-cache-array,make-company-abstract</DB_IMPLEMENTATION>
+      </CODE_GENERATION_PROPERTIES>
+   </CODE_GENERATION_PROPERTIES>
+   <NAME>ShopOrderLine</NAME>
+   <COMPONENT>SHPORD</COMPONENT>
+   <ATTRIBUTES>
+      <ATTRIBUTE>
+         <NAME>LineNo</NAME>
+         <DATATYPE>NUMBER</DATATYPE>
+      </ATTRIBUTE>
+   </ATTRIBUTES>
+</ENTITY>

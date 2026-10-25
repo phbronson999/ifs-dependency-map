@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ENTITY xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:ifsworld-com:schemas:entity_entity">
+   <CODE_GENERATION_PROPERTIES>
+      <CODE_GENERATION_PROPERTIES>
+         <DB_VIEW_NAME>SHOP_ORD</DB_VIEW_NAME>
+         <DB_TABLE_NAME>SHOP_ORDER_TAB</DB_TABLE_NAME>
+      </CODE_GENERATION_PROPERTIES>
+   </CODE_GENERATION_PROPERTIES>
+   <DIAGRAMS>
+      <DIAGRAM>
+         <NAME>Main</NAME>
+         <DIAGRAM_TYPE>STATE_MACHINE</DIAGRAM_TYPE>
+      </DIAGRAM>
+   </DIAGRAMS>
+   <NAME>ShopOrder</NAME>
+   <COMPONENT>SHPORD</COMPONENT>
+   <ATTRIBUTES>
+      <ATTRIBUTE>
+         <NAME>OrderNo</NAME>
+         <IS_PRIMARY_KEY>1</IS_PRIMARY_KEY>
+         <DATATYPE>TEXT</DATATYPE>
+      </ATTRIBUTE>
+   </ATTRIBUTES>
+</ENTITY>
