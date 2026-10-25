@@ -156,7 +156,9 @@ json_struct!(Location { file, line });
 json_struct!(Suggestion { summary, snippet, target });
 json_struct!(Step { file, line, text, note });
 json_struct!(Trail { title, steps });
-json_struct!(Finding { id, severity, rule, title, message, nodes, edges, location, suggestion, evidence, involves_cust });
+json_struct!(Finding { id, severity, rule, title, message, nodes, edges, location, suggestion, evidence, involves_cust, diff });
+json_struct!(Diff { old_path, old_line, new_file, new_line, lines, cust_file, cust_line, cust_code });
+json_struct!(DiffLine { op, text, old, new, in_cust });
 json_struct!(Stats { files, by_kind, units, objects, edges, millis });
 json_struct!(Index { version, core_root, cust_root, files, units, objects, relations, edges, components, findings, stats, notes });
 

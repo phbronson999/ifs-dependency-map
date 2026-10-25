@@ -26,7 +26,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - `src-tauri/` Tauri 2 shell: `pick_folder`, `index_folders`, `open_in_editor` (`code -g`)
 
 ## Commands
-- `cargo test` (36 tests, must stay green)
+- `cargo test` (39 tests, must stay green)
 - `cargo run --release --bin ifsdep -- --core <dir> --cust <dir> --json out.json [--strict]`
 - `npm install`, then `npm run tauri dev` / `npm run demo` (builds ui/dist/demo.html)
 
@@ -63,7 +63,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
   and only a .upg creates.
 
 ## Rules for working here
-- NEVER write, move or delete anything under `C:\devstudio\project-parent-25r1`. Read only.
+- NEVER write, move or delete anything under `C:\devstudio\project-parent-25r1` or `C:\devstudio\project-parent-23r2`. Read only.
 - Never copy real IFS or customer source into `fixtures/` or anywhere in this repo. Write
   minimal synthetic snippets that reproduce the syntax instead.
 - Every parser fix gets a fixture case and a test. Keep the core crate dependency-free and

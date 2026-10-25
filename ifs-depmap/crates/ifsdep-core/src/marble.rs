@@ -82,6 +82,8 @@ struct Pending {
 }
 
 pub fn parse(text: &str, file_kind: FileKind) -> ParsedMarble {
+    let blanked = blank_block_comments(text);
+    let text = blanked.as_str();
     let mut out = ParsedMarble::default();
     let default_section = match file_kind {
         FileKind::Client => Some(Section::Client),
@@ -299,7 +301,46 @@ fn split_word(s: &str) -> (&str, &str) {
     }
 }
 
-/// Removes a trailing `-- comment`, ignoring `--` inside double-quoted strings.
+/// Blanks `/* ... */` comments (which may span lines) outside double-quoted strings,
+/// keeping newlines so line numbers stay right. A `//` or `--` line comment hides any
+/// `/*` after it on that line.
+fn blank_block_comments(text: &str) -> String {
+    if !text.contains("/*") {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let (mut i, mut in_str, mut in_line_comment) = (0, false, false);
+    while i < chars.len() {
+        let (c, next) = (chars[i], chars.get(i + 1).copied());
+        if c == '\n' {
+            in_str = false;
+            in_line_comment = false;
+        } else if in_line_comment {
+        } else if c == '"' {
+            in_str = !in_str;
+        } else if !in_str && ((c == '/' && next == Some('/')) || (c == '-' && next == Some('-'))) {
+            in_line_comment = true;
+        } else if !in_str && c == '/' && next == Some('*') {
+            out.push_str("  ");
+            i += 2;
+            while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                i += 1;
+            }
+            if i < chars.len() {
+                out.push_str("  ");
+                i += 2;
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Removes a trailing `-- comment` or `// comment`, ignoring them inside double-quoted strings.
 pub fn strip_comment(line: &str) -> &str {
     let bytes = line.as_bytes();
     let mut in_str = false;
@@ -308,6 +349,8 @@ pub fn strip_comment(line: &str) -> &str {
         match bytes[i] {
             b'"' => in_str = !in_str,
             b'-' if !in_str && i + 1 < bytes.len() && bytes[i + 1] == b'-' => return &line[..i],
+            // `//` comments out a line or the rest of one (35,000 lines in 25R1 Core).
+            b'/' if !in_str && i + 1 < bytes.len() && bytes[i + 1] == b'/' => return &line[..i],
             _ => {}
         }
         i += 1;
@@ -493,5 +536,27 @@ action AddIndirectClocking {
         assert_eq!(p.decls[6].modifier.as_deref(), Some("Overtake"));
         // The entity keeps the reference that follows its bound actions.
         assert_eq!(p.decls[0].refs.len(), 1);
+    }
+    #[test]
+    fn comments_with_braces_are_ignored() {
+        let src = "fragment F;
+component C;
+layer Core;
+                   command A for E {
+   execute {
+      navigate \"page/X/Form?$filter=a eq 1 // not a comment\";
+                   //   bulkexecute {
+   }
+}
+                   /* list Old for E {
+      field X;
+ */
+                   list InventoryList for E {
+   field Y; /* { */
+}
+";
+        let p = parse(src, FileKind::Fragment);
+        let names: Vec<(&str, usize)> = p.decls.iter().map(|d| (d.name.as_str(), d.line)).collect();
+        assert_eq!(names, [("A", 4), ("InventoryList", 13)], "the list after the commented-out braces is still top level");
     }
 }

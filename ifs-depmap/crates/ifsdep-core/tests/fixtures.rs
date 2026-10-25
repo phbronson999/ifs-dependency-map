@@ -9,7 +9,7 @@ fn fixtures() -> Index {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
     let core = root.join("core");
     let cust = root.join("cust");
-    index(&IndexOptions { core: Some(&core), cust: Some(&cust) })
+    index(&IndexOptions { core: Some(&core), cust: Some(&cust), ..Default::default() })
 }
 
 fn findings<'a>(idx: &'a Index, rule: &str) -> Vec<&'a Finding> {
@@ -48,6 +48,10 @@ fn indexes_everything() {
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
+    // `//` and `/* */` comments with braces in them don't swallow the command after them.
+    let reprint = object(&idx, "ShopOrder", "ReprintCommand", false);
+    assert_eq!((reprint.kind.as_str(), reprint.section), ("command", Some(Section::Client)));
+    assert!(idx.objects.iter().all(|o| o.name != "OldPrintCommand" && o.name != "OldGroup"));
 }
 
 #[test]
@@ -90,7 +94,7 @@ fn finds_all_three_cycles_and_classifies_them() {
 #[test]
 fn core_alone_has_only_the_core_cycle() {
     let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/core");
-    let idx = index(&IndexOptions { core: Some(&core), cust: None });
+    let idx = index(&IndexOptions { core: Some(&core), ..Default::default() });
     let cycles = findings(&idx, "CYCLE");
     assert_eq!(cycles.len(), 1);
     assert!(cycles[0].title.contains("in Core"));
@@ -176,7 +180,7 @@ fn overrides_of_generated_methods_have_a_base() {
 fn core_alone_reports_no_overrides_without_a_base() {
     // Core never overrides Cust, so with no Cust folder there is nothing to report here.
     let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/core");
-    let idx = index(&IndexOptions { core: Some(&core), cust: None });
+    let idx = index(&IndexOptions { core: Some(&core), ..Default::default() });
     assert!(findings(&idx, "OVERRIDE_NO_BASE").is_empty());
 }
 
@@ -468,4 +472,55 @@ fn objects_link_all_the_way_down_to_tables() {
     for step in ["view SHOP_ORD", "table SHOP_ORDER_TAB", "function Get_Part_Description", "function Get_Description", "table INVENTORY_PART_TAB"] {
         assert!(chain.iter().any(|c| c == step), "missing {step} in {chain:?}");
     }
+}
+
+#[test]
+fn upgrade_comparison_says_what_changed_under_each_customization() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let (core, cust, prev) = (root.join("core"), root.join("cust"), root.join("prev-core"));
+    let idx = index(&IndexOptions { core: Some(&core), cust: Some(&cust), prev_core: Some(&prev) });
+    let mut got: Vec<(String, Severity, String)> = idx
+        .findings
+        .iter()
+        .filter(|f| f.rule == "BASE_CHANGED" || f.rule == "ENTITY_CHANGED")
+        .map(|f| (f.rule.clone(), f.severity, f.title.clone()))
+        .collect();
+    got.sort_by(|a, b| a.2.cmp(&b.2));
+    assert_eq!(
+        got,
+        [
+            ("ENTITY_CHANGED".to_string(), Severity::Info, "ShopOrder changed under your -Cust.entity".to_string()),
+            ("BASE_CHANGED".to_string(), Severity::Info, "group ShopOrderGroup in ShopOrder.client changed under your @Override".to_string()),
+            ("BASE_CHANGED".to_string(), Severity::Info, "procedure Check_Insert___ in ShopOrder.plsql changed under your @Override".to_string()),
+            ("BASE_CHANGED".to_string(), Severity::Info, "procedure Insert___ in ShopOrder.plsql changed under your @Override".to_string()),
+        ]
+    );
+    let by_title = |t: &str| idx.findings.iter().find(|f| f.title.starts_with(t)).unwrap();
+
+    // Check_Insert___ gained the $IF block: the diff has just those lines, numbered in both versions.
+    let f = by_title("procedure Check_Insert___");
+    let d = f.diff.as_ref().unwrap();
+    assert!(d.old_path.ends_with("ShopOrder.plsql") && d.old_path.contains("prev-core"));
+    assert_eq!((d.old_line, d.new_line), (7, 7));
+    let added: Vec<(&str, Option<usize>)> = d.lines.iter().filter(|l| l.op == "+").map(|l| (l.text.trim(), l.new)).collect();
+    assert_eq!(added[0], ("$IF Component_Proj_SYS.INSTALLED $THEN", Some(12)));
+    assert!(d.lines.iter().all(|l| l.op != "-"));
+    assert_eq!(idx.files[f.location.as_ref().unwrap().file].rel_path.rsplit('/').next(), Some("ShopOrder-Cust.plsql"));
+    // Next to IFS's change: your customization's code, from its declaration to its END.
+    assert_eq!(idx.files[d.cust_file.unwrap()].rel_path.rsplit('/').next(), Some("ShopOrder-Cust.plsql"));
+    assert_eq!(d.cust_line, 8);
+    assert_eq!((d.cust_code.first().map(String::as_str), d.cust_code.last().map(String::as_str)), (Some("PROCEDURE Check_Insert___ ("), Some("END Check_Insert___;")));
+
+    // Insert___ gained attr_; the Cust override already has it.
+    assert!(by_title("procedure Insert___").message.contains("already has the new one"));
+    // The group's declaration changed, not the page's `group ShopOrderGroup;`.
+    let g = by_title("group ShopOrderGroup").diff.as_ref().unwrap();
+    assert_eq!(g.new_line, 51);
+    assert!(g.lines.iter().any(|l| l.op == "+" && l.text.contains("\"General\"")));
+    // The entity lost an attribute.
+    let e = by_title("ShopOrder changed under");
+    assert!(e.message.contains("Removed: OrderStatus"), "{}", e.message);
+    assert!(idx.notes.iter().any(|n| n.starts_with("Upgrade comparison with")));
+    // Without a previous Core there are no upgrade findings.
+    assert!(fixtures().findings.iter().all(|f| f.rule != "BASE_CHANGED" && f.rule != "ENTITY_CHANGED"));
 }

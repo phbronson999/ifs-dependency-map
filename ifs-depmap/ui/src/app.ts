@@ -33,6 +33,8 @@ const ui = {
   unitKinds: new Set<string>(ALL_UNIT_KINDS),
   edgeKinds: new Set<string>(["include", "uses_projection", "implements", "calls", ...OBJECT_EDGE_KINDS]),
   sev: new Set<Severity>(["error", "warning", "info"]),
+  /** Show only the upgrade comparison's findings (what changed under each customization). */
+  upgradeOnly: false,
   /** Show findings that involve only Core files. Off by default: Core can't be changed and compiles as delivered. */
   showCore: false,
   /** Selecting something either filters the graph down to it and its links, or highlights them in place. */
@@ -55,7 +57,8 @@ const ui = {
   view: { x: 0, y: 0, k: 1 },
   graph: null as Graph | null,
   placed: null as Map<string, Placed> | null,
-  roots: { core: null as string | null, cust: null as string | null },
+  /** prev: the previous Core (an older checkout or the Impact Analyzer's Base folder), optional. */
+  roots: { core: null as string | null, cust: null as string | null, prev: null as string | null },
   busy: false,
   loadedFile: "",
 };
@@ -107,7 +110,7 @@ function boot() {
   if (invoke) {
     try {
       const saved = JSON.parse(localStorage.getItem("ifsdepmap.roots") ?? "null");
-      if (saved) ui.roots = saved;
+      if (saved) ui.roots = { core: saved.core ?? null, cust: saved.cust ?? null, prev: saved.prev ?? null };
     } catch { /* storage unavailable */ }
     renderRoots();
     if (ui.roots.core || ui.roots.cust) reindex();
@@ -144,7 +147,7 @@ async function reindex() {
   $("stats").textContent = "Indexing…";
   renderRoots();
   try {
-    const json: string = await invoke("index_folders", { core: ui.roots.core, cust: ui.roots.cust });
+    const json: string = await invoke("index_folders", { core: ui.roots.core, cust: ui.roots.cust, prevCore: ui.roots.prev });
     setIndex(JSON.parse(json));
   } catch (e) {
     $("stats").textContent = "";
@@ -155,9 +158,11 @@ async function reindex() {
   }
 }
 
-async function chooseRoot(which: "core" | "cust") {
+const ROOT_TITLE = { core: "Core", cust: "Cust", prev: "previous Core (an older checkout, or the Impact Analyzer's Base folder)" };
+
+async function chooseRoot(which: "core" | "cust" | "prev") {
   if (!invoke) return;
-  const path: string | null = await invoke("pick_folder", { title: `Choose the ${which === "core" ? "Core" : "Cust"} folder` });
+  const path: string | null = await invoke("pick_folder", { title: `Choose the ${ROOT_TITLE[which]} folder` });
   if (!path) return;
   ui.roots[which] = path;
   try { localStorage.setItem("ifsdepmap.roots", JSON.stringify(ui.roots)); } catch { /* ignore */ }
@@ -176,9 +181,11 @@ function renderAll(fit = false) {
 function renderRoots() {
   const el = $("roots");
   if (invoke) {
-    const chip = (which: "core" | "cust") =>
-      `<span class="root-chip"><span class="tag ${which}">${which}</span><span class="path" title="${esc(ui.roots[which] ?? "")}">${esc(ui.roots[which] ?? "not set")}</span><button class="btn small" data-root="${which}">Choose</button></span>`;
-    el.innerHTML = `${chip("core")}${chip("cust")}<button class="btn small primary" id="reindex" ${ui.busy || !(ui.roots.core || ui.roots.cust) ? "disabled" : ""}>${ui.busy ? "Indexing…" : "Index"}</button>`;
+    const chip = (which: "core" | "cust" | "prev", tag: string, empty: string) =>
+      `<span class="root-chip"><span class="tag ${which}">${tag}</span><span class="path" title="${esc(ui.roots[which] ?? "")}">${esc(ui.roots[which] ?? empty)}</span><button class="btn small" data-root="${which}">Choose</button>${
+        which === "prev" && ui.roots.prev ? `<button class="btn small" data-clear-root="prev" title="Stop comparing with a previous Core" aria-label="Clear the previous Core">×</button>` : ""
+      }</span>`;
+    el.innerHTML = `${chip("core", "core", "not set")}${chip("cust", "cust", "not set")}${chip("prev", "previous core", "optional, for upgrades")}<button class="btn small primary" id="reindex" ${ui.busy || !(ui.roots.core || ui.roots.cust) ? "disabled" : ""}>${ui.busy ? "Indexing…" : "Index"}</button>`;
   } else {
     const idx = ui.model?.idx;
     const label = idx ? (document.getElementById("demo-data") && !ui.loadedFile ? "Sample Core + Cust test files" : ui.loadedFile) : "No data loaded";
@@ -195,6 +202,9 @@ function renderEmpty() {
   }</p></div>`;
 }
 
+/** Findings from the upgrade comparison (with a previous Core). */
+const isUpgrade = (f: Finding) => f.rule === "BASE_CHANGED" || f.rule === "ENTITY_CHANGED";
+
 function renderFindings() {
   const m = ui.model;
   if (!m) return;
@@ -202,12 +212,16 @@ function renderFindings() {
   for (const f of m.findings) counts[f.severity]++;
   const names: Record<Severity, string> = { error: "Errors", warning: "Warnings", info: "Info" };
   const coreOnly = m.idx.findings.filter((f) => !f.involves_cust).length;
+  const upgrades = m.findings.filter(isUpgrade).length;
   $("sev-filters").innerHTML =
     (["error", "warning", "info"] as Severity[])
       .map((s) => `<button class="sev-chip" data-sev="${s}" aria-pressed="${ui.sev.has(s)}"><span class="dot ${s}"></span>${names[s]} <b>${counts[s]}</b></button>`)
       .join("") +
-    `<button class="sev-chip scope" data-scope aria-pressed="${ui.showCore}" title="Findings that involve only Core files. Core can't be changed and compiles as delivered, so these are hidden unless you turn them on."><span class="pill core">Core</span>only <b>${coreOnly.toLocaleString()}</b></button>`;
-  const list = m.findings.filter((f) => ui.sev.has(f.severity));
+    `<button class="sev-chip scope" data-scope aria-pressed="${ui.showCore}" title="Findings that involve only Core files. Core can't be changed and compiles as delivered, so these are hidden unless you turn them on."><span class="pill core">Core</span>only <b>${coreOnly.toLocaleString()}</b></button>` +
+    (upgrades
+      ? `<button class="sev-chip scope" data-upgrade aria-pressed="${ui.upgradeOnly}" title="Only what changed under your customizations since the previous Core"><span class="pill prev">Upgrade</span>only <b>${upgrades.toLocaleString()}</b></button>`
+      : "");
+  const list = m.findings.filter((f) => ui.sev.has(f.severity) && (!ui.upgradeOnly || !upgrades || isUpgrade(f)));
   $("finding-list").innerHTML = list.length
     ? list
         .map((f) => {
@@ -745,6 +759,37 @@ function evidenceHtml(f: Finding) {
   return `<section><h4>How this was found</h4>${trails}</section>`;
 }
 
+/** Upgrade findings: the Core declaration before and now, as a diff with both line numbers. */
+function diffHtml(f: Finding) {
+  const d = f.diff;
+  if (!d) return "";
+  const m = ui.model!;
+  const now = m.file(d.new_file);
+  // Under an @Overtake, a column says whether your copy has each changed line.
+  const yours = d.lines.some((l) => l.in_cust !== null);
+  const mark = (l: DiffLine) =>
+    l.in_cust === null ? ""
+    : l.op === "+" ? (l.in_cust ? `<span class="yes" title="Your copy has this line">✓ has</span>` : `<span class="no" title="Your copy doesn't have this line IFS added">✗ missing</span>`)
+    : (l.in_cust ? `<span class="no" title="Your copy still has this line IFS removed">✗ still there</span>` : `<span class="yes" title="Your copy doesn't have this line either">✓ gone</span>`);
+  const rows = d.lines
+    .map((l) => {
+      if (l.op === "@") return `<tr class="gap"><td colspan="${yours ? 4 : 3}">${esc(l.text)}</td></tr>`;
+      const cls = l.op === "+" ? "add" : l.op === "-" ? "del" : l.op === "~" ? "mod" : "ctx";
+      return `<tr class="${cls}"><td class="n">${l.old ?? ""}</td><td class="n">${l.new ?? ""}</td>${yours ? `<td class="y">${mark(l)}</td>` : ""}<td class="t"><span class="op">${l.op === " " ? "" : esc(l.op)}</span>${esc(l.text)}</td></tr>`;
+    })
+    .join("");
+  const name = (p: string) => p.split(/[\\/]/).pop();
+  const cust = d.cust_file !== null ? m.file(d.cust_file) : null;
+  return `<section><h4>What changed in Core</h4>
+<div class="fileline"><span class="pill prev">Before</span><span class="p" title="${esc(d.old_path)}">${esc(name(d.old_path))}:${d.old_line}</span><button class="btn small" data-action="open-path" data-path="${esc(d.old_path)}" data-line="${d.old_line}">${invoke ? "Open" : "Copy"}</button></div>
+<div class="fileline"><span class="pill core">Now</span><span class="p" title="${esc(now.rel_path)}">${esc(name(now.rel_path))}:${d.new_line}</span><button class="btn small" data-action="open" data-file="${d.new_file}" data-line="${d.new_line}">${invoke ? "Open" : "Copy"}</button></div>
+<div class="diff"><table><thead><tr><th>before</th><th>now</th>${yours ? "<th>your copy</th>" : ""}<th></th></tr></thead><tbody>${rows}</tbody></table></div></section>${
+    cust
+      ? `<section><h4>Your customization</h4>${fileLine(d.cust_file!, d.cust_line, cust.rel_path.split("/").pop())}<pre class="cust-code">${d.cust_code.map(esc).join("\n")}</pre></section>`
+      : ""
+  }`;
+}
+
 function findingHtml(m: Model, f: Finding) {
   const loc = f.location ? fileLine(f.location.file, f.location.line) : "";
   const involved = [...new Set(f.nodes)].map(nodeLink).join("");
@@ -754,6 +799,7 @@ function findingHtml(m: Model, f: Finding) {
 <h3>${esc(f.title)}</h3>
 <p>${esc(f.message)}</p>
 ${loc ? `<section><h4>Where</h4>${loc}</section>` : ""}
+${diffHtml(f)}
 ${evidenceHtml(f)}
 ${sug ? `<section><h4>Suggested fix</h4><p class="callout">${esc(sug.summary)}</p>${sug.snippet ? `<pre class="snippet">${snippetHtml(sug.snippet)}</pre>` : ""}${sug.target ? `<p class="mono" style="color:var(--muted)">in ${esc(sug.target)}</p>` : ""}</section>` : ""}
 <section><h4>Involved</h4><div class="linklist">${involved}</div></section>
@@ -952,13 +998,17 @@ function setLevel(level: Level) {
 }
 
 async function openFile(fi: number, line: number) {
-  const f = ui.model!.file(fi);
+  await openPath(ui.model!.file(fi).abs_path, line);
+}
+
+/** Opens any file at a line in VS Code (in the browser build, copies the command). */
+async function openPath(path: string, line: number) {
   if (invoke) {
-    try { await invoke("open_in_editor", { path: f.abs_path, line }); }
+    try { await invoke("open_in_editor", { path, line }); }
     catch (e) { toast(`Couldn't open VS Code: ${e}`); }
     return;
   }
-  const cmd = `code -g "${f.abs_path}:${line}"`;
+  const cmd = `code -g "${path}:${line}"`;
   try {
     await navigator.clipboard.writeText(cmd);
     toast("Copied the VS Code command");
@@ -1021,7 +1071,13 @@ function bindEvents() {
     const panelBtn = t.closest<HTMLElement>("[data-panel]");
     if (panelBtn) { togglePanel(panelBtn.dataset.panel as "left" | "right"); return; }
     const root = t.closest<HTMLElement>("[data-root]");
-    if (root) { chooseRoot(root.dataset.root as "core" | "cust"); return; }
+    if (root) { chooseRoot(root.dataset.root as "core" | "cust" | "prev"); return; }
+    if (t.closest("[data-clear-root]")) {
+      ui.roots.prev = null;
+      try { localStorage.setItem("ifsdepmap.roots", JSON.stringify(ui.roots)); } catch { /* ignore */ }
+      renderRoots();
+      return;
+    }
     if (t.closest("#reindex")) { reindex(); return; }
     const fi = t.closest<HTMLElement>("[data-f]");
     if (fi && !t.closest("[data-action]")) { selectFinding(fi.dataset.f!); return; }
@@ -1058,6 +1114,11 @@ function bindEvents() {
     }
     const jump = t.closest<HTMLElement>("[data-jump]");
     if (jump) { jumpTo(jump.dataset.jump!); return; }
+    if (t.closest("[data-upgrade]")) {
+      ui.upgradeOnly = !ui.upgradeOnly;
+      renderFindings();
+      return;
+    }
     if (t.closest("[data-scope]")) {
       ui.showCore = !ui.showCore;
       try { localStorage.setItem("ifsdepmap.showCore", String(ui.showCore)); } catch { /* storage unavailable */ }
@@ -1091,6 +1152,7 @@ function bindEvents() {
     if (act) {
       const a = act.dataset.action;
       if (a === "open") openFile(Number(act.dataset.file), Number(act.dataset.line));
+      else if (a === "open-path") openPath(act.dataset.path!, Number(act.dataset.line));
       else if (a === "goto") { gotoNode(act.dataset.node!); setPane("graph"); }
       else if (a === "drill") drill(act.dataset.node!);
       else if (a === "finding") selectFinding(act.dataset.f!);

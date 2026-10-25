@@ -1,4 +1,4 @@
-//! `ifsdep --core <dir> --cust <dir> [--json out.json] [--strict]`
+//! `ifsdep --core <dir> --cust <dir> [--prev-core <dir>] [--json out.json] [--strict]`
 //!
 //! Indexes the folders, prints the findings, and optionally writes the full
 //! graph as JSON (the same data the desktop UI loads). With `--strict` the exit
@@ -11,6 +11,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let mut core: Option<PathBuf> = None;
     let mut cust: Option<PathBuf> = None;
+    let mut prev_core: Option<PathBuf> = None;
     let mut json: Option<PathBuf> = None;
     let mut strict = false;
     let mut args = std::env::args().skip(1);
@@ -18,10 +19,11 @@ fn main() -> ExitCode {
         match a.as_str() {
             "--core" => core = args.next().map(PathBuf::from),
             "--cust" => cust = args.next().map(PathBuf::from),
+            "--prev-core" => prev_core = args.next().map(PathBuf::from),
             "--json" => json = args.next().map(PathBuf::from),
             "--strict" => strict = true,
             "-h" | "--help" => {
-                println!("usage: ifsdep --core <dir> [--cust <dir>] [--json <out.json>] [--strict]");
+                println!("usage: ifsdep --core <dir> [--cust <dir>] [--prev-core <dir>] [--json <out.json>] [--strict]");
                 return ExitCode::SUCCESS;
             }
             other => {
@@ -31,11 +33,11 @@ fn main() -> ExitCode {
         }
     }
     if core.is_none() && cust.is_none() {
-        eprintln!("usage: ifsdep --core <dir> [--cust <dir>] [--json <out.json>] [--strict]");
+        eprintln!("usage: ifsdep --core <dir> [--cust <dir>] [--prev-core <dir>] [--json <out.json>] [--strict]");
         return ExitCode::from(2);
     }
 
-    let idx = index(&IndexOptions { core: core.as_deref(), cust: cust.as_deref() });
+    let idx = index(&IndexOptions { core: core.as_deref(), cust: cust.as_deref(), prev_core: prev_core.as_deref() });
     println!(
         "{} files, {} units, {} objects, {} edges in {} ms",
         idx.stats.files, idx.stats.units, idx.stats.objects, idx.stats.edges, idx.stats.millis

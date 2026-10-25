@@ -272,7 +272,7 @@ fn quoted_name(s: &str) -> Option<String> {
 }
 
 /// Blanks `--` and `/* */` comments, keeping string literals (which hold the names here).
-fn blank_comments(text: &str) -> String {
+pub(crate) fn blank_comments(text: &str) -> String {
     let b = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let (mut i, mut in_str) = (0, false);

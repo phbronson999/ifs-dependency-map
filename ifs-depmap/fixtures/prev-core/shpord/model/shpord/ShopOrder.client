@@ -1,0 +1,67 @@
+client ShopOrder;
+component SHPORD;
+layer Core;
+projection ShopOrderHandling;
+
+include fragment ShopOrderCommon;
+include fragment UserAllowedSiteLovSelector;
+
+----------------------------- NAVIGATOR ENTRIES -----------------------------
+
+-------------------------------- MAIN PAGES ---------------------------------
+page Form using ShopOrderSet {
+   label = "Shop Order";
+   selector ShopOrderSelector;
+   group ShopOrderGroup;
+   list OrderLinesList(OrderLinesArray);
+}
+
+-------------------------------- COMMANDS -----------------------------------
+command ReleaseCommand for ShopOrder {
+   label = "Release";
+   enabled = [Objstate = "Planned"];
+   execute {
+      call ReleaseOrder(OrderNo);
+   }
+}
+
+-- Calls the action bound to the ShopOrder entity in the Core projection, not the
+-- unrelated Cust action with the same name.
+command PrintCommand for ShopOrder {
+   label = "Print";
+   execute {
+      call PrintOrder();
+   }
+}
+
+-- Overrides a generated command. The Cust command with the same name must not
+-- become its base: Core never layers over Cust.
+@Override
+command UnissueCommand for ShopOrder {
+   label = "Manual Unissue";
+}
+
+--------------------------------- SELECTORS ---------------------------------
+selector ShopOrderSelector for ShopOrder {
+   label = "${OrderNo}";
+   static OrderNo;
+}
+
+---------------------------------- GROUPS -----------------------------------
+group ShopOrderGroup for ShopOrder {
+   label = "Order";
+   field OrderNo;
+   lov ContractRef with ReferenceUserAllowedSiteLovSelector {
+      label = "Site";
+   }
+}
+
+// Commented out, braces and all. Neither comment style may swallow what follows.
+// command OldPrintCommand for ShopOrder {
+//    execute {
+/* group OldGroup for ShopOrder {
+   field OrderNo;
+*/
+command ReprintCommand for ShopOrder {
+   label = "Reprint";
+}

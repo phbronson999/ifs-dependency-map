@@ -277,6 +277,35 @@ pub struct Finding {
     /// A file in the Cust folder is involved. When false the finding is about Core
     /// alone, which can't be changed and compiles as delivered.
     pub involves_cust: bool,
+    /// Upgrade findings: what changed in the Core declaration since the previous Core.
+    pub diff: Option<Diff>,
+}
+
+/// One declaration before (in the previous Core) and now.
+#[derive(Debug, Clone)]
+pub struct Diff {
+    /// The previous Core file, absolute (it isn't part of the index).
+    pub old_path: String,
+    pub old_line: usize,
+    pub new_file: usize,
+    pub new_line: usize,
+    pub lines: Vec<DiffLine>,
+    /// Your customization: where it is and its code (first lines only for long ones).
+    pub cust_file: Option<usize>,
+    pub cust_line: usize,
+    pub cust_code: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiffLine {
+    /// " " unchanged, "-" only before, "+" only now, "~" changed (entity attributes), "@" a gap.
+    pub op: String,
+    pub text: String,
+    pub old: Option<usize>,
+    pub new: Option<usize>,
+    /// Under an `@Overtake`: whether your copy has this line ("+": you have IFS's new line;
+    /// "-": you still have the line IFS removed). None where it doesn't apply.
+    pub in_cust: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]

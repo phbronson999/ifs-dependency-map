@@ -96,7 +96,28 @@ interface Finding {
   evidence: Trail[];
   /** A Cust file is involved; false means the finding is about Core alone. */
   involves_cust: boolean;
+  /** Upgrade findings: the Core declaration before (previous Core) and now. */
+  diff: Diff | null;
 }
+
+interface Diff {
+  /** The previous Core file, absolute; it isn't one of the index's files. */
+  old_path: string;
+  old_line: number;
+  new_file: number;
+  new_line: number;
+  lines: DiffLine[];
+  /** Your customization: where it is and its code. */
+  cust_file: number | null;
+  cust_line: number;
+  cust_code: string[];
+}
+
+/**
+ * op: " " unchanged, "-" only before, "+" only now, "~" changed (entity attributes), "@" a gap.
+ * in_cust (under an @Overtake): your copy has this line ("+") / still has it ("-").
+ */
+interface DiffLine { op: string; text: string; old: number | null; new: number | null; in_cust: boolean | null }
 
 /** One source line in a chain of evidence; `note` marks a step that rests on an assumption. */
 interface Step { file: number; line: number; text: string; note: string | null }

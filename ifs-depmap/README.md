@@ -23,6 +23,8 @@ changed and compiles as delivered); the *Core only* chip shows them.
 | `OVERRIDE_NO_BASE` | warning / info | `@Override`/`@Overtake` with nothing to layer over (info for projection entities, whose base may be an LU `.entity`). |
 | `UNRESOLVED_INCLUDE` / `UNRESOLVED_PROJECTION` | warning | Name not found in either folder. |
 | `COLUMN_AMBIGUOUS` | error | A Cust attribute (or Cust `@Override VIEW` column) gives a view or table a column that a query uses without an alias prefix, while another relation in the same FROM already has it: the query no longer compiles (ORA-00918). Only SQL in `.plsql`, `.plsvc` and `.views` files is checked. |
+| `BASE_CHANGED` | error / warning / info | With a previous Core: the Core declaration an `@Override` / `@Overtake` (or Cust `@Override VIEW`) layers over changed. Shows the diff of just that declaration. Error when its signature changed and yours still has the old one; warning under an `@Overtake` (your copy replaces IFS's new code); info otherwise. |
+| `ENTITY_CHANGED` | warning / info | With a previous Core: the Core `.entity` under a `-Cust.entity` gained, lost or changed attributes; a warning when Core now has an attribute your Cust entity also declares. |
 
 ## How Core and Cust are modelled
 
@@ -78,6 +80,16 @@ or the `.entity` it is generated from.
 - **Show: Touched by Cust** limits every view to what's declared in Cust files and
   what Cust code overrides, includes, calls or reads.
 
+## Upgrades
+
+Set **previous Core** (the third folder in the app, or `--prev-core`) to an older Core
+checkout, or to the Impact Analyzer's `Base` folder, and every Cust customization is
+compared with what it sits on: the declaration it overrides or overtakes, the Core view
+under a Cust `@Override VIEW`, and the Core `.entity` under a `-Cust.entity`. Unlike
+the Impact Analyzer, it follows each override to its actual base, which is often in
+another file (a list declared in a fragment the client includes), shows what changed,
+and ignores changes to comments and layout.
+
 ## Layout
 
 ```
@@ -97,8 +109,8 @@ src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 ## Running
 
 ```sh
-cargo test                                         # 36 tests
-cargo run --bin ifsdep -- --core <dir> --cust <dir> [--json graph.json] [--strict]
+cargo test                                         # 39 tests
+cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli
 npm run tauri dev                                  # desktop app

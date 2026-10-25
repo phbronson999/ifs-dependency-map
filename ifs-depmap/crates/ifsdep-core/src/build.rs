@@ -6,14 +6,19 @@ use crate::marble::{self, ParsedMarble, RefKind};
 use crate::model::*;
 use crate::plsql::{self, ParsedPlsql};
 use crate::scan;
+use crate::upgrade;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Instant;
 
+#[derive(Default)]
 pub struct IndexOptions<'a> {
     pub core: Option<&'a Path>,
     pub cust: Option<&'a Path>,
+    /// The previous Core (an older checkout, or the Impact Analyzer's `Base` folder), for
+    /// the upgrade comparison. Only read where a Cust customization needs it.
+    pub prev_core: Option<&'a Path>,
 }
 
 enum Parsed {
@@ -871,6 +876,11 @@ pub fn index(opts: &IndexOptions) -> Index {
     // 7. Findings.
     let mut findings = unresolved;
     findings.extend(analyze::run(&idx, &cols));
+    if let Some(prev) = opts.prev_core {
+        let mut notes = Vec::new();
+        upgrade::run(&idx, prev, &mut findings, &mut notes);
+        idx.notes.extend(notes);
+    }
     for f in &mut findings {
         let cust_file = |fi: usize| idx.files[fi].root == Layer::Cust;
         f.involves_cust = f.location.as_ref().is_some_and(|l| cust_file(l.file))
@@ -927,6 +937,7 @@ fn unresolved_finding(idx: &Index, file: usize, line: usize, what: &str, name: &
             target: None,
         }),
         evidence: vec![],
+        diff: None,
         involves_cust: false,
     }
 }

@@ -19,6 +19,8 @@
   --warn-soft: #f8eedc;
   --info: #3c6a9e;
   --info-soft: #e3ecf6;
+  --add: #1f7a3d;
+  --add-soft: #e2f3e6;
   --font-display: "IBM Plex Sans Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
   --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
@@ -30,7 +32,7 @@
     --ink: #e2eae8; --muted: #93a19e; --accent: #45b5bf; --accent-soft: #163a3d;
     --core: #b9c6c3; --cust: #a887f0; --cust-soft: #2a2140; --edge: #5f6e6b;
     --error: #f07263; --error-soft: #3a1f1c; --warn: #e3a63e; --warn-soft: #36290f;
-    --info: #7fa9da; --info-soft: #1b2a3b;
+    --info: #7fa9da; --info-soft: #1b2a3b; --add: #6fcf8a; --add-soft: #16301f;
     color-scheme: dark;
   }
 }
@@ -39,7 +41,7 @@
   --ink: #e2eae8; --muted: #93a19e; --accent: #45b5bf; --accent-soft: #163a3d;
   --core: #b9c6c3; --cust: #a887f0; --cust-soft: #2a2140; --edge: #5f6e6b;
   --error: #f07263; --error-soft: #3a1f1c; --warn: #e3a63e; --warn-soft: #36290f;
-  --info: #7fa9da; --info-soft: #1b2a3b;
+  --info: #7fa9da; --info-soft: #1b2a3b; --add: #6fcf8a; --add-soft: #16301f;
   color-scheme: dark;
 }
 
@@ -106,6 +108,7 @@ button, input, select { font: inherit; color: inherit; }
 .root-chip .tag { font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .root-chip .tag.core { color: var(--core); }
 .root-chip .tag.cust { color: var(--cust); }
+.root-chip .tag.prev { color: var(--muted); }
 .root-chip .path { font: 12px var(--font-mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .spacer { flex: 1; }
 .search { position: relative; width: min(320px, 100%); }
@@ -284,6 +287,7 @@ marker.m-sel path { fill: var(--accent); }
 .pill.info { background: var(--info-soft); color: var(--info); }
 .pill.core { background: var(--line-soft); color: var(--core); }
 .pill.cust { background: var(--cust-soft); color: var(--cust); }
+.pill.prev { background: var(--line-soft); color: var(--muted); }
 .pill.plain { background: var(--line-soft); color: var(--muted); }
 .filelist { display: grid; gap: 6px; }
 .fileline {
@@ -390,3 +394,21 @@ marker.m-sel path { fill: var(--accent); }
 .band text.bl:hover, .band text.sl:hover { text-decoration: underline; }
 .notice.info { background: var(--accent-soft); border-color: var(--accent); }
 .selmode .sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
+
+/* Upgrade diffs: the Core declaration before and now. */
+.diff { margin-top: 6px; border: 1px solid var(--line); border-radius: var(--r); overflow: auto; max-height: 420px; background: var(--raised); }
+.diff table { border-collapse: collapse; width: 100%; font: 11.5px/1.5 var(--font-mono); }
+.diff th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font: 600 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; text-align: right; padding: 2px 6px; border-bottom: 1px solid var(--line); }
+.diff td { padding: 0 6px; vertical-align: top; }
+.diff td.n { color: var(--muted); text-align: right; user-select: none; width: 1%; white-space: nowrap; }
+.diff td.t { white-space: pre; }
+.diff td.t .op { display: inline-block; width: 1.4ch; color: var(--muted); }
+.diff tr.add td.t { background: var(--add-soft); color: var(--add); }
+.diff tr.del td.t { background: var(--error-soft); color: var(--error); }
+.diff tr.mod td.t { background: var(--warn-soft); color: var(--warn); }
+.diff tr.add td.t .op, .diff tr.del td.t .op, .diff tr.mod td.t .op { color: inherit; }
+.diff tr.gap td { color: var(--muted); text-align: center; background: var(--surface); }
+.diff td.y { white-space: nowrap; font: 600 10.5px var(--font-mono); width: 1%; }
+.diff td.y .yes { color: var(--add); }
+.diff td.y .no { color: var(--error); }
+.cust-code { margin: 6px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; background: var(--cust-soft); border: 1px solid var(--line); border-left: 3px solid var(--cust); border-radius: var(--r); font: 11.5px/1.5 var(--font-mono); white-space: pre; }

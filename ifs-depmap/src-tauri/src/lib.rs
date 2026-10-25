@@ -21,14 +21,15 @@ async fn pick_folder(app: tauri::AppHandle, title: Option<String>) -> Option<Str
 }
 
 #[tauri::command]
-async fn index_folders(core: Option<String>, cust: Option<String>) -> Result<String, String> {
+async fn index_folders(core: Option<String>, cust: Option<String>, prev_core: Option<String>) -> Result<String, String> {
     if core.is_none() && cust.is_none() {
         return Err("Choose a Core or Cust folder first.".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         let core = core.map(PathBuf::from);
         let cust = cust.map(PathBuf::from);
-        let idx = ifsdep_core::index(&ifsdep_core::IndexOptions { core: core.as_deref(), cust: cust.as_deref() });
+        let prev_core = prev_core.map(PathBuf::from);
+        let idx = ifsdep_core::index(&ifsdep_core::IndexOptions { core: core.as_deref(), cust: cust.as_deref(), prev_core: prev_core.as_deref() });
         ifsdep_core::json::to_string(&idx)
     })
     .await
