@@ -13,6 +13,8 @@ const EDGE_LABEL: Record<string, string> = {
   invokes: "calls", reads: "reads",
 };
 
+type Depth = "direct" | "chain";
+
 /** Width settings: how many canvas widths a band may span before it wraps. */
 const BAND_WIDTHS = {
   normal: { label: "Normal", factor: 1.6 },
@@ -35,8 +37,10 @@ const ui = {
   showCore: false,
   /** Selecting something either filters the graph down to it and its links, or highlights them in place. */
   selectMode: "filter" as "filter" | "highlight",
-  /** How far from a selected node to go: one link, or the whole chain up and down. */
-  depth: "direct" as "direct" | "chain",
+  /** How far from a selected node to go, per level: one link, or the whole chain up and down. */
+  depthByLevel: { components: "direct", units: "direct", objects: "direct" } as Record<Level, Depth>,
+  /** The current level's depth. */
+  get depth(): Depth { return this.depthByLevel[this.level]; },
   /** Draw only what Cust touches (declared in Cust files, or overridden / used by Cust code). */
   custOnly: false,
   /** How wide a band (or the layered graph) gets before it wraps, as a multiple of the canvas width. */
@@ -88,7 +92,12 @@ function boot() {
     if (saved) { panels.left = saved.left !== false; panels.right = saved.right !== false; }
     ui.showCore = localStorage.getItem("ifsdepmap.showCore") === "true";
     if (localStorage.getItem("ifsdepmap.selectMode") === "highlight") ui.selectMode = "highlight";
-    if (localStorage.getItem("ifsdepmap.depth") === "chain") ui.depth = "chain";
+    // One depth per level; the older single setting seeds all three.
+    const byLevel = JSON.parse(localStorage.getItem("ifsdepmap.depthByLevel") ?? "null");
+    const old: Depth = localStorage.getItem("ifsdepmap.depth") === "chain" ? "chain" : "direct";
+    for (const l of ["components", "units", "objects"] as Level[]) {
+      ui.depthByLevel[l] = byLevel?.[l] === "chain" || byLevel?.[l] === "direct" ? byLevel[l] : old;
+    }
     ui.custOnly = localStorage.getItem("ifsdepmap.custOnly") === "true";
     const w = localStorage.getItem("ifsdepmap.width");
     if (w && w in BAND_WIDTHS) ui.width = w as keyof typeof BAND_WIDTHS;
@@ -1033,8 +1042,8 @@ function bindEvents() {
     }
     const depth = t.closest<HTMLElement>("[data-depth]");
     if (depth) {
-      ui.depth = depth.dataset.depth as "direct" | "chain";
-      try { localStorage.setItem("ifsdepmap.depth", ui.depth); } catch { /* storage unavailable */ }
+      ui.depthByLevel[ui.level] = depth.dataset.depth as Depth;
+      try { localStorage.setItem("ifsdepmap.depthByLevel", JSON.stringify(ui.depthByLevel)); } catch { /* storage unavailable */ }
       renderToolbar();
       renderGraph();
       return;
