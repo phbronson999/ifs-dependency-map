@@ -272,8 +272,56 @@ fn json_is_well_formed_enough_for_the_ui() {
     let idx = fixtures();
     let s = json::to_string(&idx);
     assert!(s.starts_with("{\"version\":1,"));
-    assert_eq!(s.matches('{').count(), s.matches('}').count());
+    // Braces and brackets balance outside strings (evidence quotes source lines with braces).
+    let (mut depth, mut in_str, mut escaped) = (0i64, false, false);
+    for c in s.chars() {
+        match (in_str, c) {
+            (true, _) if escaped => escaped = false,
+            (true, '\\') => escaped = true,
+            (true, '"') | (false, '"') => in_str = !in_str,
+            (false, '{' | '[') => depth += 1,
+            (false, '}' | ']') => depth -= 1,
+            _ => {}
+        }
+        assert!(depth >= 0);
+    }
+    assert_eq!((depth, in_str), (0, false));
     assert!(s.contains("\"kind\":\"implicit_include\""));
+}
+
+#[test]
+fn findings_show_how_they_were_reached() {
+    let idx = fixtures();
+    let text = |s: &Step| format!("{}:{} {}", idx.files[s.file].rel_path.rsplit('/').next().unwrap(), s.line, s.text);
+
+    // The duplicate structure: one trail per definition, from the projection, line by line.
+    let dup = &findings(&idx, "DUPLICATE_DEFINITION")[0];
+    let trails: Vec<Vec<String>> = dup.evidence.iter().map(|t| t.steps.iter().map(text).collect()).collect();
+    assert_eq!(
+        trails,
+        [
+            vec![
+                "ShopOrderHandling.projection:12 include fragment ShopOrderCommon;",
+                "ShopOrderCommon.fragment:32 structure ShopOrderNoteStructure {",
+            ],
+            vec![
+                "ShopOrderHandling.projection:12 include fragment ShopOrderCommon;",
+                "ShopOrderCommon-Cust.fragment:6 include fragment TiShopOrderExtras;",
+                "TiShopOrderExtras-Cust.fragment:21 structure ShopOrderNoteStructure {",
+            ],
+        ]
+    );
+    assert!(dup.involves_cust);
+
+    // MISSING_OVERRIDE cites both declarations.
+    let m = &findings(&idx, "MISSING_OVERRIDE")[0];
+    assert_eq!(m.evidence[0].steps.len(), 2);
+    assert!(m.evidence[0].steps.iter().all(|s| s.text.contains("GetDefaultSite")));
+
+    // The Core-only cycle involves no Cust file; the one that appears with Cust does.
+    let cycles = findings(&idx, "CYCLE");
+    assert!(!cycles.iter().find(|f| f.title.contains("in Core")).unwrap().involves_cust);
+    assert!(cycles.iter().filter(|f| f.involves_cust).count() == 2);
 }
 
 /// Follows outgoing object-level links from one object, depth first, and returns

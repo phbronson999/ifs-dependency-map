@@ -152,7 +152,9 @@ json_struct!(Connection { target, kind, layer, file, line });
 json_struct!(Component { name, has_core, has_cust, deploy_files, connections });
 json_struct!(Location { file, line });
 json_struct!(Suggestion { summary, snippet, target });
-json_struct!(Finding { id, severity, rule, title, message, nodes, edges, location, suggestion });
+json_struct!(Step { file, line, text, note });
+json_struct!(Trail { title, steps });
+json_struct!(Finding { id, severity, rule, title, message, nodes, edges, location, suggestion, evidence, involves_cust });
 json_struct!(Stats { files, by_kind, units, objects, edges, millis });
 json_struct!(Index { version, core_root, cust_root, files, units, objects, relations, edges, components, findings, stats, notes });
 

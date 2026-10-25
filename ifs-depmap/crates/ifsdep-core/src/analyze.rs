@@ -17,12 +17,31 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 pub fn run(idx: &Index) -> Vec<Finding> {
     let mut out = Vec::new();
+    let mut src = Source::default();
     cycles(idx, &mut out);
-    duplicates(idx, &mut out);
+    duplicates(idx, &mut src, &mut out);
     overrides(idx, &mut out);
     connections(idx, &mut out);
     layers(idx, &mut out);
     out
+}
+
+/// Reads the source lines that evidence cites, loading each file once.
+#[derive(Default)]
+struct Source {
+    files: HashMap<usize, Vec<String>>,
+}
+
+impl Source {
+    fn step(&mut self, idx: &Index, file: usize, line: usize, note: Option<String>) -> Step {
+        let lines = self.files.entry(file).or_insert_with(|| {
+            std::fs::read(&idx.files[file].abs_path)
+                .map(|b| String::from_utf8_lossy(&b).lines().map(|l| l.trim().to_string()).collect())
+                .unwrap_or_default()
+        });
+        let text = line.checked_sub(1).and_then(|i| lines.get(i)).cloned().unwrap_or_default();
+        Step { file, line, text, note }
+    }
 }
 
 fn finding(severity: Severity, rule: &str, title: impl Into<String>, message: impl Into<String>) -> Finding {
@@ -36,6 +55,8 @@ fn finding(severity: Severity, rule: &str, title: impl Into<String>, message: im
         edges: vec![],
         location: None,
         suggestion: None,
+        evidence: vec![],
+        involves_cust: false,
     }
 }
 
@@ -227,7 +248,7 @@ fn dup_key(o: &Object) -> String {
     }
 }
 
-fn duplicates(idx: &Index, out: &mut Vec<Finding>) {
+fn duplicates(idx: &Index, src: &mut Source, out: &mut Vec<Finding>) {
     let mut by_unit: HashMap<&str, Vec<usize>> = HashMap::new();
     for (oi, o) in idx.objects.iter().enumerate() {
         by_unit.entry(o.unit.as_str()).or_default().push(oi);
@@ -266,6 +287,11 @@ fn duplicates(idx: &Index, out: &mut Vec<Finding>) {
                 );
                 f.nodes = vec![u.id.clone(), ob.id.clone(), idx.objects[base].id.clone()];
                 f.location = Some(Location { file: ob.file, line: ob.line });
+                let bo = &idx.objects[base];
+                f.evidence = vec![Trail {
+                    title: format!("Both files make up {}, and neither declaration is an override", u.name),
+                    steps: vec![src.step(idx, bo.file, bo.line, None), src.step(idx, ob.file, ob.line, None)],
+                }];
                 f.suggestion = Some(Suggestion {
                     summary: "Mark the Cust declaration as an override so it layers over the base instead of clashing with it.".into(),
                     snippet: Some(format!(
@@ -283,10 +309,10 @@ fn duplicates(idx: &Index, out: &mut Vec<Finding>) {
     }
 
     // b) Two different units feed the same definition into one client/projection.
-    let mut include_adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut include_adj: HashMap<&str, Vec<(&str, usize)>> = HashMap::new();
     for e in &idx.edges {
         if matches!(e.kind, EdgeKind::Include | EdgeKind::ImplicitInclude) {
-            include_adj.entry(e.from.as_str()).or_default().push(e.to.as_str());
+            include_adj.entry(e.from.as_str()).or_default().push((e.to.as_str(), e.id));
         }
     }
     let mut reported: BTreeMap<(Vec<String>, String), (Vec<String>, Vec<usize>)> = BTreeMap::new();
@@ -298,7 +324,7 @@ fn duplicates(idx: &Index, out: &mut Vec<Finding>) {
         while let Some(u) = stack.pop() {
             if seen.insert(u) {
                 reach.push(u);
-                stack.extend(include_adj.get(u).into_iter().flatten().copied());
+                stack.extend(include_adj.get(u).into_iter().flatten().map(|&(to, _)| to));
             }
         }
         let mut defs: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -335,13 +361,45 @@ fn duplicates(idx: &Index, out: &mut Vec<Finding>) {
             "DUPLICATE_DEFINITION",
             format!("{} {} defined twice", o0.kind, o0.name),
             format!(
-                "{} {} is defined in {} and both reach {}.",
+                "{} {} is defined in {} and both reach {}. A {} takes in everything its fragments define, so the name would be there twice.",
                 o0.kind,
                 o0.name,
                 where_.join(" and "),
-                root_names.join(", ")
+                root_names.join(", "),
+                if unit(idx, &roots[0]).kind == UnitKind::Client { "client" } else { "projection" }
             ),
         );
+        let root = unit(idx, &roots[0]);
+        let parents = include_parents(&include_adj, root.id.as_str());
+        f.evidence = objs
+            .iter()
+            .map(|&o| {
+                let ob = &idx.objects[o];
+                let mut chain = Vec::new();
+                let mut at = ob.unit.as_str();
+                while let Some(&(prev, e)) = parents.get(at) {
+                    chain.push(e);
+                    at = prev;
+                }
+                chain.reverse();
+                let mut steps: Vec<Step> = chain
+                    .iter()
+                    .map(|&e| {
+                        let ed = &idx.edges[e];
+                        let note = (ed.kind == EdgeKind::ImplicitInclude).then(|| {
+                            let client = idx.files[ed.file].unit.as_deref().map(|u| unit(idx, u).name.as_str()).unwrap_or("?");
+                            format!(
+                                "Assumed: a fragment the client {client} includes also reaches its projection {}, which doesn't include it itself.",
+                                root.name
+                            )
+                        });
+                        src.step(idx, ed.file, ed.line, note)
+                    })
+                    .collect();
+                steps.push(src.step(idx, ob.file, ob.line, None));
+                Trail { title: format!("{} → definition in {}", root.name, unit(idx, &ob.unit).name), steps }
+            })
+            .collect();
         let cust = objs.iter().copied().find(|&o| idx.files[idx.objects[o].file].root == Layer::Cust).unwrap_or(objs[0]);
         let cf = &idx.files[idx.objects[cust].file];
         f.nodes = units.clone();
@@ -358,6 +416,23 @@ fn duplicates(idx: &Index, out: &mut Vec<Finding>) {
         });
         out.push(f);
     }
+}
+
+/// For each unit reachable from `root` through includes, the unit and include link it was
+/// first reached from (breadth first, so following them back gives the shortest chain).
+fn include_parents<'a>(adj: &HashMap<&'a str, Vec<(&'a str, usize)>>, root: &'a str) -> HashMap<&'a str, (&'a str, usize)> {
+    let mut parents = HashMap::new();
+    let mut seen = HashSet::from([root]);
+    let mut queue = VecDeque::from([root]);
+    while let Some(u) = queue.pop_front() {
+        for &(to, e) in adj.get(u).into_iter().flatten() {
+            if seen.insert(to) {
+                parents.insert(to, (u, e));
+                queue.push_back(to);
+            }
+        }
+    }
+    parents
 }
 
 // ------------------------------------------------------------- overrides

@@ -733,6 +733,17 @@ pub fn index(opts: &IndexOptions) -> Index {
     // 7. Findings.
     let mut findings = unresolved;
     findings.extend(analyze::run(&idx));
+    for f in &mut findings {
+        let cust_file = |fi: usize| idx.files[fi].root == Layer::Cust;
+        f.involves_cust = f.location.as_ref().is_some_and(|l| cust_file(l.file))
+            || f.edges.iter().any(|&e| cust_file(idx.edges[e].file))
+            || f.evidence.iter().flat_map(|t| &t.steps).any(|s| cust_file(s.file))
+            || f.nodes.iter().any(|n| match n.as_bytes().first() {
+                Some(b'u') => idx.units[id_index(n)].origin == Layer::Cust,
+                Some(b'o') => cust_file(idx.objects[id_index(n)].file),
+                _ => false,
+            });
+    }
     findings.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.rule.cmp(&b.rule)).then(a.message.cmp(&b.message)));
     for (i, f) in findings.iter_mut().enumerate() {
         f.id = format!("f{i}");
@@ -768,5 +779,7 @@ fn unresolved_finding(idx: &Index, file: usize, line: usize, what: &str, name: &
             snippet: None,
             target: None,
         }),
+        evidence: vec![],
+        involves_cust: false,
     }
 }

@@ -23,6 +23,8 @@ const ui = {
   unitKinds: new Set<string>(ALL_UNIT_KINDS),
   edgeKinds: new Set<string>(["include", "uses_projection", "implements", "calls", ...OBJECT_EDGE_KINDS]),
   sev: new Set<Severity>(["error", "warning", "info"]),
+  /** Show findings that involve only Core files. Off by default: Core can't be changed and compiles as delivered. */
+  showCore: false,
   selected: null as null | { type: "finding" | "node"; id: string },
   view: { x: 0, y: 0, k: 1 },
   graph: null as Graph | null,
@@ -62,6 +64,7 @@ function boot() {
   try {
     const saved = JSON.parse(localStorage.getItem("ifsdepmap.panels") ?? "null");
     if (saved) { panels.left = saved.left !== false; panels.right = saved.right !== false; }
+    ui.showCore = localStorage.getItem("ifsdepmap.showCore") === "true";
   } catch { /* storage unavailable */ }
   applyPanels();
   bindEvents();
@@ -81,8 +84,13 @@ function boot() {
   }
 }
 
+function applyScope() {
+  ui.model?.indexFindings((f) => ui.showCore || f.involves_cust);
+}
+
 function setIndex(idx: GraphIndex) {
   ui.model = new Model(idx);
+  applyScope();
   ui.level = "components";
   ui.components.clear();
   ui.focus.clear();
@@ -155,12 +163,15 @@ function renderFindings() {
   const m = ui.model;
   if (!m) return;
   const counts: Record<Severity, number> = { error: 0, warning: 0, info: 0 };
-  for (const f of m.idx.findings) counts[f.severity]++;
+  for (const f of m.findings) counts[f.severity]++;
   const names: Record<Severity, string> = { error: "Errors", warning: "Warnings", info: "Info" };
-  $("sev-filters").innerHTML = (["error", "warning", "info"] as Severity[])
-    .map((s) => `<button class="sev-chip" data-sev="${s}" aria-pressed="${ui.sev.has(s)}"><span class="dot ${s}"></span>${names[s]} <b>${counts[s]}</b></button>`)
-    .join("");
-  const list = m.idx.findings.filter((f) => ui.sev.has(f.severity));
+  const coreOnly = m.idx.findings.filter((f) => !f.involves_cust).length;
+  $("sev-filters").innerHTML =
+    (["error", "warning", "info"] as Severity[])
+      .map((s) => `<button class="sev-chip" data-sev="${s}" aria-pressed="${ui.sev.has(s)}"><span class="dot ${s}"></span>${names[s]} <b>${counts[s]}</b></button>`)
+      .join("") +
+    `<button class="sev-chip scope" data-scope aria-pressed="${ui.showCore}" title="Findings that involve only Core files. Core can't be changed and compiles as delivered, so these are hidden unless you turn them on."><span class="pill core">Core</span>only <b>${coreOnly.toLocaleString()}</b></button>`;
+  const list = m.findings.filter((f) => ui.sev.has(f.severity));
   $("finding-list").innerHTML = list.length
     ? list
         .map((f) => {
@@ -170,7 +181,11 @@ function renderFindings() {
           return `<li><button class="finding-item${sel}" data-f="${f.id}"><span class="stripe ${f.severity}"></span><span class="t">${esc(f.title)}</span><span class="rule">${esc(f.rule)}</span><span class="where">${esc(where)}</span></button></li>`;
         })
         .join("")
-    : `<li class="empty">${m.idx.findings.length ? "Nothing matches the filter." : "No problems found."}</li>`;
+    : `<li class="empty">${
+        !m.idx.findings.length ? "No problems found."
+        : !m.findings.length ? "No findings involve Cust files. Findings about Core alone are hidden."
+        : "Nothing matches the filter."
+      }</li>`;
 }
 
 function renderToolbar() {
@@ -475,7 +490,7 @@ function renderDetails() {
 function overviewHtml(m: Model) {
   const s = m.idx.stats;
   const kinds = Object.entries(s.by_kind).map(([k, v]) => `<dt>.${esc(k === "deployini" ? "ini" : k)}</dt><dd>${v.toLocaleString()}</dd>`).join("");
-  const errors = m.idx.findings.filter((f) => f.severity === "error").length;
+  const errors = m.findings.filter((f) => f.severity === "error").length;
   return `<div class="d">
 <h3>${errors ? `${errors} thing${errors === 1 ? "" : "s"} to fix` : "No blocking problems"}</h3>
 <p>Each box is a component. Lines are includes, projection use and PL/SQL calls that cross components; the number is how many. Double-tap a component to see its files, and a file to see what it declares.</p>
@@ -483,6 +498,24 @@ function overviewHtml(m: Model) {
 ${m.idx.core_root || m.idx.cust_root ? `<section><h4>Folders</h4><dl class="kv"><dt>Core</dt><dd class="mono">${esc(m.idx.core_root ?? "—")}</dd><dt>Cust</dt><dd class="mono">${esc(m.idx.cust_root ?? "—")}</dd></dl></section>` : ""}
 ${m.idx.notes.length ? `<section><h4>Notes</h4>${m.idx.notes.slice(0, 20).map((n) => `<p class="mono">${esc(n)}</p>`).join("")}</section>` : ""}
 </div>`;
+}
+
+/** The chains of source lines behind a finding, in order, each line openable. */
+function evidenceHtml(f: Finding) {
+  if (!f.evidence.length) return "";
+  const m = ui.model!;
+  const step = (s: Step) => {
+    const file = m.file(s.file);
+    const pill = file.root === "Core" ? `<span class="pill core">Core</span>` : `<span class="pill cust">Cust</span>`;
+    const name = `${file.component.toLowerCase()} · ${file.rel_path.split("/").pop()}:${s.line}`;
+    return `<li class="step${s.note ? " assumed" : ""}">
+<div class="step-head">${pill}<span class="p" title="${esc(file.rel_path)}">${esc(name)}</span><button class="btn small" data-action="open" data-file="${s.file}" data-line="${s.line}">${invoke ? "Open" : "Copy"}</button></div>
+<code>${esc(s.text)}</code>${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}</li>`;
+  };
+  const trails = f.evidence
+    .map((t) => `<div class="trail"><div class="trail-title">${esc(t.title)}</div><ol>${t.steps.map(step).join("")}</ol></div>`)
+    .join("");
+  return `<section><h4>How this was found</h4>${trails}</section>`;
 }
 
 function findingHtml(m: Model, f: Finding) {
@@ -494,6 +527,7 @@ function findingHtml(m: Model, f: Finding) {
 <h3>${esc(f.title)}</h3>
 <p>${esc(f.message)}</p>
 ${loc ? `<section><h4>Where</h4>${loc}</section>` : ""}
+${evidenceHtml(f)}
 ${sug ? `<section><h4>Suggested fix</h4><p class="callout">${esc(sug.summary)}</p>${sug.snippet ? `<pre class="snippet">${snippetHtml(sug.snippet)}</pre>` : ""}${sug.target ? `<p class="mono" style="color:var(--muted)">in ${esc(sug.target)}</p>` : ""}</section>` : ""}
 <section><h4>Involved</h4><div class="linklist">${involved}</div></section>
 </div>`;
@@ -744,6 +778,13 @@ function bindEvents() {
       const s = sev.dataset.sev as Severity;
       ui.sev.has(s) ? ui.sev.delete(s) : ui.sev.add(s);
       renderFindings();
+      return;
+    }
+    if (t.closest("[data-scope]")) {
+      ui.showCore = !ui.showCore;
+      try { localStorage.setItem("ifsdepmap.showCore", String(ui.showCore)); } catch { /* storage unavailable */ }
+      applyScope();
+      renderAll();
       return;
     }
     const lvl = t.closest<HTMLElement>("[data-level]");

@@ -82,7 +82,17 @@ class Model {
         push(this.edgesByObject, e.to, e);
       }
     }
-    for (const f of idx.findings) {
+    this.indexFindings(() => true);
+  }
+
+  /** The findings that pass the current filter; everything that shows findings reads these. */
+  findings: Finding[] = [];
+
+  indexFindings(keep: (f: Finding) => boolean) {
+    this.findings = this.idx.findings.filter(keep);
+    this.findingsByNode.clear();
+    this.findingsByComponent.clear();
+    for (const f of this.findings) {
       const comps = new Set<string>();
       for (const n of f.nodes) {
         push(this.findingsByNode, n, f);

@@ -5,7 +5,10 @@ graph, shows it at three zoom levels (components → files → objects), and fla
 the things that get in the way, like circular fragment includes.
 
 It is read-only. It never writes to the folders it indexes. Each finding links to
-the file and line and shows an example of the fix.
+the file and line, shows an example of the fix and, under *How this was found*,
+the source lines that led to it, with any step that rests on an assumption marked.
+Findings that involve only Core files are hidden by default (Core can't be
+changed and compiles as delivered); the *Core only* chip shows them.
 
 ## What it checks
 
@@ -77,7 +80,7 @@ src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 ## Running
 
 ```sh
-cargo test                                         # 26 tests
+cargo test                                         # 27 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli

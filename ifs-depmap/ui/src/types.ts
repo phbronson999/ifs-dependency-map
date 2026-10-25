@@ -84,7 +84,15 @@ interface Finding {
   edges: number[];
   location: { file: number; line: number } | null;
   suggestion: { summary: string; snippet: string | null; target: string | null } | null;
+  /** How the finding was reached, as chains of source lines. */
+  evidence: Trail[];
+  /** A Cust file is involved; false means the finding is about Core alone. */
+  involves_cust: boolean;
 }
+
+/** One source line in a chain of evidence; `note` marks a step that rests on an assumption. */
+interface Step { file: number; line: number; text: string; note: string | null }
+interface Trail { title: string; steps: Step[] }
 
 interface GraphIndex {
   version: number;

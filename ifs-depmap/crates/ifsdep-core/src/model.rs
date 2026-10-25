@@ -219,6 +219,24 @@ pub struct Suggestion {
     pub target: Option<String>,
 }
 
+/// One source line in the chain of evidence behind a finding.
+#[derive(Debug, Clone)]
+pub struct Step {
+    pub file: usize,
+    pub line: usize,
+    /// The line as written in the file, trimmed.
+    pub text: String,
+    /// Set when the step rests on an assumption rather than on the line itself.
+    pub note: Option<String>,
+}
+
+/// An ordered chain of source lines, e.g. the includes that bring a definition into a projection.
+#[derive(Debug, Clone)]
+pub struct Trail {
+    pub title: String,
+    pub steps: Vec<Step>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Finding {
     pub id: String,
@@ -230,6 +248,11 @@ pub struct Finding {
     pub edges: Vec<usize>,
     pub location: Option<Location>,
     pub suggestion: Option<Suggestion>,
+    /// How the finding was reached, line by line.
+    pub evidence: Vec<Trail>,
+    /// A file in the Cust folder is involved. When false the finding is about Core
+    /// alone, which can't be changed and compiles as delivered.
+    pub involves_cust: bool,
 }
 
 #[derive(Debug, Clone, Default)]
