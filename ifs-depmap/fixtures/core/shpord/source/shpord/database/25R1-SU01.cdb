@@ -1,0 +1,16 @@
+-- Service update script: adds a log table and widens a column.
+DECLARE
+   table_name_ VARCHAR2(30) := 'SHOP_ORDER_SU_LOG_TAB';
+   columns_    Database_SYS.ColumnTabType;
+BEGIN
+   Database_SYS.Reset_Column_Table(columns_);
+   Database_SYS.Set_Table_Column(columns_, 'ORDER_NO', 'VARCHAR2(12)', 'N');
+   Database_SYS.Create_Table(table_name_, columns_, '&IFSAPP_DATA', NULL, TRUE);
+END;
+/
+DECLARE
+   table_name_ VARCHAR2(30) := 'SHOP_ORDER_TAB';
+BEGIN
+   Database_SYS.Alter_Table_Column(table_name_, 'M', column_, TRUE);
+END;
+/

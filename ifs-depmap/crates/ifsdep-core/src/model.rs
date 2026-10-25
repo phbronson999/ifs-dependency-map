@@ -21,7 +21,7 @@ pub enum FileKind {
     Views,
     /// `TABLE x IS (...)` definitions, indexes and sequences.
     Storage,
-    /// Install scripts (`.cre`): only the tables their PL/SQL blocks create are read.
+    /// Install scripts (`.cre`, `.cdb`): only the tables their PL/SQL blocks create are read.
     Cre,
 }
 
@@ -40,7 +40,7 @@ impl FileKind {
             "entity" => Some(Self::Entity),
             "views" => Some(Self::Views),
             "storage" => Some(Self::Storage),
-            "cre" => Some(Self::Cre),
+            "cre" | "cdb" => Some(Self::Cre),
             _ => None,
         }
     }

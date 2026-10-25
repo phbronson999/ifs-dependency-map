@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 42);
+    assert_eq!(idx.stats.files, 43);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -334,9 +334,12 @@ fn views_lead_to_their_tables() {
 
     // A table defined in .storage, and one generated for a pure Cust LU.
     assert_eq!(defs("SHOP_ORDER_HIST_TAB"), ["table ShopOrder.storage:5"]);
-    // Tables created by PL/SQL blocks in .storage and .cre files, named in strings.
+    // Tables created by PL/SQL blocks in .storage, .cre and .cdb files, named in strings. The
+    // .cdb block that only alters SHOP_ORDER_TAB doesn't define it.
     assert_eq!(defs("SHOP_ORDER_QUEUE_TAB"), ["temporary table ShopOrder.storage:16"]);
     assert_eq!(defs("SHOP_ORDER_SNAP_TAB"), ["temporary table ShopOrderSnapshot.cre:6"]);
+    assert_eq!(defs("SHOP_ORDER_SU_LOG_TAB"), ["table 25R1-SU01.cdb:3"]);
+    assert_eq!(defs("SHOP_ORDER_TAB"), ["generated table ShopOrder.entity:6"]);
     assert_eq!(defs("TI_QUALITY_CHECKS_TAB"), ["generated table TiQualityChecks-Cust.entity:3"]);
 
     // ShopOrderKPI renames only its view; the table keeps the LU's name, and every capital of
