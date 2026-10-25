@@ -107,6 +107,9 @@ pub struct Object {
     /// Resolved base object for overrides.
     pub base: Option<String>,
     pub base_origin: Option<Layer>,
+    /// No base in any file, but it is generated from the model (IFS's "Base" layer):
+    /// any Core override, or a Cust override of a template method like `Insert___`.
+    pub base_generated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

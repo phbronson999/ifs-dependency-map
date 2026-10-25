@@ -367,7 +367,7 @@ fn duplicates(idx: &Index, out: &mut Vec<Finding>) {
 fn overrides(idx: &Index, out: &mut Vec<Finding>) {
     for o in &idx.objects {
         let Some(m) = &o.modifier else { continue };
-        if o.base.is_some() {
+        if o.base.is_some() || o.base_generated {
             continue;
         }
         let file = &idx.files[o.file];
@@ -552,8 +552,10 @@ fn layers(idx: &Index, out: &mut Vec<Finding>) {
             (u.origin, u.name.clone(), u.id.clone())
         } else {
             // An override of a Core method lives in a Cust file but is still the Core method.
+            // With no base in any file, the base is generated below Core: Core compiles
+            // without Cust, so whatever Core calls exists there.
             let o = object(idx, &e.to);
-            let origin = if o.modifier.is_some() { o.base_origin.unwrap_or(Layer::Cust) } else { idx.files[o.file].root };
+            let origin = if o.modifier.is_some() { o.base_origin.unwrap_or(Layer::Core) } else { idx.files[o.file].root };
             (origin, format!("{} {}", o.kind, o.name), o.unit.clone())
         };
         if target_origin != Layer::Cust || !seen.insert((e.file, target_name.clone())) {

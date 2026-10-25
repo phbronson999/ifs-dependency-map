@@ -44,6 +44,8 @@ interface Obj {
   dynamic: string | null;
   base: string | null;
   base_origin: Layer | null;
+  /** No base in any file; it is generated from the model. */
+  base_generated: boolean;
 }
 
 /** A table or view named in `from = "…"` or SQL; name only until .views is indexed. */

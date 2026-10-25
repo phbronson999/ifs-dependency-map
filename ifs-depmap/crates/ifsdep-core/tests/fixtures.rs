@@ -34,10 +34,17 @@ fn object<'a>(idx: &'a Index, unit: &str, name: &str, modifier: bool) -> &'a Obj
         .unwrap_or_else(|| panic!("object {unit}.{name} not found"))
 }
 
+fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Object {
+    idx.objects
+        .iter()
+        .find(|o| idx.files[o.file].root == layer && idx.units[id_index(&o.unit)].name == unit && o.name == name)
+        .unwrap_or_else(|| panic!("{layer:?} object {unit}.{name} not found"))
+}
+
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 33);
+    assert_eq!(idx.stats.files, 34);
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
 }
 
@@ -122,9 +129,56 @@ fn overrides_resolve_to_core_or_pure_cust_bases() {
     assert_eq!(plsql.base_origin, Some(Layer::Core));
 
     let no_base: Vec<_> = findings(&idx, "OVERRIDE_NO_BASE").iter().map(|f| (f.severity, f.title.clone())).collect();
-    assert_eq!(no_base.len(), 2);
+    assert_eq!(no_base.len(), 3, "{no_base:?}");
     assert!(no_base.iter().any(|(s, t)| *s == Severity::Warning && t.contains("Check_Update_Ti___")));
+    // A state event's base is generated from the .entity state machine, which isn't parsed yet.
+    assert!(no_base.iter().any(|(s, t)| *s == Severity::Warning && t.contains("Close__")));
     assert!(no_base.iter().any(|(s, t)| *s == Severity::Info && t.contains("ShopOrderOperation")));
+}
+
+#[test]
+fn overrides_of_generated_methods_have_a_base() {
+    let idx = fixtures();
+
+    // Core overrides layer over the base generated from the model, which no file declares.
+    let core_insert = object_in(&idx, Layer::Core, "Shop_Order_API", "Insert___");
+    assert!(core_insert.base.is_none());
+    assert!(core_insert.base_generated);
+    assert!(object(&idx, "Shop_Order_API", "Get_Objstate", true).base_generated);
+
+    // The Cust Insert___ layers over the Core override, even though that is an override too.
+    let cust_insert = object_in(&idx, Layer::Cust, "Shop_Order_API", "Insert___");
+    assert_eq!(cust_insert.base.as_deref(), Some(core_insert.id.as_str()));
+    assert_eq!(cust_insert.base_origin, Some(Layer::Core));
+
+    // A Core client override must not take the Cust command with the same name as its base.
+    let unissue = object_in(&idx, Layer::Core, "ShopOrder", "UnissueCommand");
+    assert!(unissue.base.is_none());
+    assert!(unissue.base_generated);
+
+    // Cust: a template method in an overlay, and anything in a pure Cust package, is generated.
+    // An unknown name in an overlay is not.
+    assert!(object(&idx, "Shop_Order_API", "Check_Delete___", true).base_generated);
+    assert!(object(&idx, "Ti_Quality_Checks_API", "Check_Insert___", true).base_generated);
+    assert!(object(&idx, "Ti_Quality_Checks_API", "Get_Check_Type", true).base_generated);
+    assert!(!object(&idx, "Shop_Order_API", "Check_Update_Ti___", true).base_generated);
+
+    for f in findings(&idx, "OVERRIDE_NO_BASE") {
+        for name in ["Insert___", "Get_Objstate", "UnissueCommand", "Check_Delete___", "Get_Check_Type"] {
+            assert!(!f.title.contains(name), "{}", f.title);
+        }
+    }
+    // Core calls Close__, which only a Cust override declares: its base is below Core.
+    assert!(findings(&idx, "CORE_DEPENDS_ON_CUST").iter().all(|f| !f.title.contains("Close__")));
+}
+
+#[test]
+fn core_alone_reports_no_overrides_or_cust_dependencies() {
+    // Core never overrides Cust, so with no Cust folder there is nothing to report here.
+    let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/core");
+    let idx = index(&IndexOptions { core: Some(&core), cust: None });
+    assert!(findings(&idx, "OVERRIDE_NO_BASE").is_empty());
+    assert!(findings(&idx, "CORE_DEPENDS_ON_CUST").is_empty());
 }
 
 #[test]
@@ -167,7 +221,7 @@ fn unresolved_include() {
 #[test]
 fn total_findings_are_exactly_the_planted_ones() {
     let idx = fixtures();
-    assert_eq!(idx.findings.len(), 15);
+    assert_eq!(idx.findings.len(), 16);
 }
 
 #[test]

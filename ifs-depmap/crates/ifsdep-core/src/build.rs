@@ -22,6 +22,18 @@ enum Parsed {
 
 const ENTITY_LIKE: &[&str] = &["entity", "query", "virtual", "structure", "summary", "singleton"];
 
+/// Template methods that IFS generates from the .entity / .projection model, so an
+/// `@Override` of them has a base even when no file declares one. Taken from the names
+/// Core overrides with no declared base in hundreds of packages (25R1).
+const GENERATED_METHODS: &[&str] = &[
+    "Check_Insert___", "Insert___", "Check_Common___", "Prepare_Insert___", "Check_Update___",
+    "Update___", "Check_Delete___", "Delete___", "Check_Exist___", "Unpack___", "New__", "Modify__",
+    "Remove__", "Exist", "Get", "Raise_Record_Not_Exist___", "Raise_Record_Exist___",
+    "Raise_Record_Access_Blocked___", "Raise_Constraint_Violated___", "Finite_State_Set___",
+    "Finite_State_Machine___", "Finite_State_Add_To_Attr___", "CRUD_Create___", "CRUD_Update___",
+    "CRUD_Delete___", "CRUD_Default___", "CRUD_Default_Copy___", "CRUD_Upload___",
+];
+
 /// Groups declarations that would clash if defined twice.
 pub fn kind_group(kind: &str) -> &str {
     if ENTITY_LIKE.contains(&kind) {
@@ -176,6 +188,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                         dynamic: d.dynamic.clone(),
                         base: None,
                         base_origin: None,
+                        base_generated: false,
                     });
                     for r in &d.refs {
                         pending_refs.push((oi, r.clone()));
@@ -199,6 +212,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                         dynamic: m.dynamic.clone(),
                         base: None,
                         base_origin: None,
+                        base_generated: false,
                     });
                 }
             }
@@ -358,18 +372,27 @@ pub fn index(opts: &IndexOptions) -> Index {
     for (oi, o) in idx.objects.iter().enumerate() {
         by_name.entry(o.name.to_ascii_uppercase()).or_default().push(oi);
     }
+    let file_root: Vec<Layer> = idx.files.iter().map(|f| f.root).collect();
+    // Candidates are plain declarations. With `core_overrides`, a Core declaration that is
+    // itself an override also counts: a Cust override layers over it, not over its base.
     let resolve = |objects: &[Object],
                    closure: &mut dyn FnMut(usize) -> Rc<HashSet<usize>>,
                    name: &str,
                    accept: &dyn Fn(&Object) -> bool,
                    from_unit: usize,
-                   exclude: Option<usize>|
+                   exclude: Option<usize>,
+                   core_overrides: bool|
      -> Option<usize> {
         let cands: Vec<usize> = by_name
             .get(&name.to_ascii_uppercase())?
             .iter()
             .copied()
-            .filter(|&c| Some(c) != exclude && objects[c].modifier.is_none() && accept(&objects[c]))
+            .filter(|&c| {
+                let o = &objects[c];
+                Some(c) != exclude
+                    && (o.modifier.is_none() || core_overrides && file_root[o.file] == Layer::Core)
+                    && accept(o)
+            })
             .collect();
         if cands.len() <= 1 {
             return cands.first().copied();
@@ -398,6 +421,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         let from_unit = id_index(&o.unit);
         let group = kind_group(&o.kind).to_string();
         let is_plsql = o.section.is_none();
+        let in_cust = idx.files[o.file].root == Layer::Cust;
         let base = resolve(
             &idx.objects,
             &mut closure,
@@ -406,10 +430,20 @@ pub fn index(opts: &IndexOptions) -> Index {
                 kind_group(&c.kind) == group
                     && c.section.is_none() == is_plsql
                     && (!is_plsql || c.unit == o.unit)
+                    // A Core override layers over Core or generated code, never over Cust.
+                    && (in_cust || file_root[c.file] == Layer::Core)
             },
             from_unit,
             Some(oi),
+            in_cust,
         );
+        if base.is_none() {
+            // Below Core there is only generated code, and a pure Cust package can only
+            // override what its own model generates.
+            let pure_cust = idx.units[from_unit].origin == Layer::Cust;
+            idx.objects[oi].base_generated = !in_cust
+                || is_plsql && (pure_cust || GENERATED_METHODS.contains(&o.name.as_str()));
+        }
         if let Some(b) = base {
             let origin = idx.files[idx.objects[b].file].root;
             idx.objects[oi].base = Some(idx.objects[b].id.clone());
@@ -453,7 +487,13 @@ pub fn index(opts: &IndexOptions) -> Index {
     }
     let method_in = |unit: usize, name: &str| -> Option<usize> {
         let c = methods.get(&(unit, name.to_ascii_uppercase()))?;
-        c.iter().copied().find(|&o| idx.objects[o].modifier.is_some()).or_else(|| c.first().copied())
+        // Core and Cust can both override a method; the Cust one is on top.
+        let is_override = |o: usize, layer: Layer| idx.objects[o].modifier.is_some() && idx.files[idx.objects[o].file].root == layer;
+        c.iter()
+            .copied()
+            .find(|&o| is_override(o, Layer::Cust))
+            .or_else(|| c.iter().copied().find(|&o| is_override(o, Layer::Core)))
+            .or_else(|| c.first().copied())
     };
     let package_method = |target: &str| -> Option<usize> {
         let (pkg, m) = target.split_once('.')?;
@@ -469,7 +509,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         let from_id = idx.objects[*oi].id.clone();
         let (to, kind) = match r.kind {
             RefKind::Enumeration => (
-                resolve(&idx.objects, &mut closure, &r.target, &|c: &Object| c.kind == "enumeration", from_unit, None)
+                resolve(&idx.objects, &mut closure, &r.target, &|c: &Object| c.kind == "enumeration", from_unit, None, false)
                     .map(|t| idx.objects[t].id.clone()),
                 EdgeKind::Enumeration,
             ),
@@ -481,6 +521,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                     &|c: &Object| ENTITY_LIKE.contains(&c.kind.as_str()) && c.section == Some(Section::Projection),
                     from_unit,
                     None,
+                    false,
                 )
                 .map(|t| idx.objects[t].id.clone()),
                 if r.kind == RefKind::Array { EdgeKind::Array } else { EdgeKind::Reference },
@@ -493,6 +534,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                     &|c: &Object| (c.kind == "action" || c.kind == "function") && c.section == Some(Section::Projection),
                     from_unit,
                     None,
+                    false,
                 )
                 .map(|t| idx.objects[t].id.clone()),
                 EdgeKind::CallsOperation,
@@ -606,7 +648,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         } else {
             (Box::new(|c: &Object| c.section == Some(Section::Projection)), EdgeKind::Binds)
         };
-        if let Some(t) = resolve(&idx.objects, &mut closure, target, &*accept, from_unit, Some(oi)) {
+        if let Some(t) = resolve(&idx.objects, &mut closure, target, &*accept, from_unit, Some(oi), false) {
             push_edge(
                 &mut edges,
                 edge(o.id.clone(), idx.objects[t].id.clone(), kind, o.file, o.line, idx.files[o.file].root),

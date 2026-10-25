@@ -25,6 +25,13 @@ command ReleaseCommand for ShopOrder {
    }
 }
 
+-- Overrides a generated command. The Cust command with the same name must not
+-- become its base: Core never layers over Cust.
+@Override
+command UnissueCommand for ShopOrder {
+   label = "Manual Unissue";
+}
+
 --------------------------------- SELECTORS ---------------------------------
 selector ShopOrderSelector for ShopOrder {
    label = "${OrderNo}";

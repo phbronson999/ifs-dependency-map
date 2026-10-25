@@ -11,6 +11,10 @@ group TiExtrasGroup for ShopOrderNoteStructure {
    field Note;
 }
 
+command UnissueCommand for ShopOrder {
+   label = "Unissue";
+}
+
 --------------------------- PROJECTION FRAGMENTS ----------------------------
 
 -- Copied from ShopOrderCommon instead of reusing it: duplicate definition.

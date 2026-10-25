@@ -145,7 +145,7 @@ json_enum!(Severity { Error => "error", Warning => "warning", Info => "info" });
 
 json_struct!(SourceFile { id, rel_path, abs_path, root, kind, component, declared_layer, unit, role, lines });
 json_struct!(Unit { id, kind, name, component, origin, files, has_overlay });
-json_struct!(Object { id, unit, file, kind, name, line, modifier, section, target, dynamic, base, base_origin });
+json_struct!(Object { id, unit, file, kind, name, line, modifier, section, target, dynamic, base, base_origin, base_generated });
 json_struct!(Edge { id, from, to, kind, file, line, layer, dynamic, count, detail });
 json_struct!(Relation { id, name, kind });
 json_struct!(Connection { target, kind, layer, file, line });

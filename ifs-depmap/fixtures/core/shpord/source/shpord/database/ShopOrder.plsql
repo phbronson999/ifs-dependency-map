@@ -26,10 +26,36 @@ BEGIN
       FROM  shop_order_tab
       WHERE order_no = order_no_;
    Check_Insert___(rec_);
-   UPDATE shop_order_tab
-      SET   rowstate = 'Released'
-      WHERE order_no = order_no_;
+   IF Get_Objstate(order_no_) = 'Planned' THEN
+      UPDATE shop_order_tab
+         SET   rowstate = 'Released'
+         WHERE order_no = order_no_;
+   ELSE
+      Close__(order_no_);
+   END IF;
 END Release__;
+
+-- Core overrides of methods generated from the entity model: the base is in no file,
+-- and calling one from Core is not a dependency on Cust.
+@Override
+PROCEDURE Insert___ (
+   objid_      OUT    VARCHAR2,
+   objversion_ OUT    VARCHAR2,
+   newrec_     IN OUT shop_order_tab%ROWTYPE,
+   attr_       IN OUT VARCHAR2 )
+IS
+BEGIN
+   super(objid_, objversion_, newrec_, attr_);
+END Insert___;
+
+@Override
+@UncheckedAccess
+FUNCTION Get_Objstate (
+   order_no_ IN VARCHAR2 ) RETURN VARCHAR2
+IS
+BEGIN
+   RETURN super(order_no_);
+END Get_Objstate;
 
 @UncheckedAccess
 FUNCTION Get_Part_Description (
