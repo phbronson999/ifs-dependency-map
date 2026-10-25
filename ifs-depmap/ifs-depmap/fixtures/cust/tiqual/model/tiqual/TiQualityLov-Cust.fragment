@@ -1,0 +1,14 @@
+fragment TiQualityLov;
+component TIQUAL;
+layer Cust;
+description "Quality code list of values";
+
+include fragment TiQualityChecks;
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+query TiQualityCode {
+   from = "ti_quality_code";
+   keys = Code;
+   attribute Code Text;
+}

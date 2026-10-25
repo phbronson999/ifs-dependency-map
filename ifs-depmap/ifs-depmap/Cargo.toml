@@ -1,0 +1,5 @@
+[workspace]
+resolver = "2"
+members = ["crates/ifsdep-core"]
+# The Tauri shell is built separately (it needs the platform webview toolchain).
+exclude = ["src-tauri"]

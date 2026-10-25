@@ -1,0 +1,17 @@
+fragment UserAllowedSiteLovSelector;
+component FNDBAS;
+layer Core;
+description "List of values for sites the current user can access";
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+query UserAllowedSiteLov {
+   from = "user_allowed_site_pub";
+   keys = Contract;
+   attribute Contract Text {
+      fetch = "contract";
+   }
+   attribute ContractDesc Text {
+      fetch = "contract_desc";
+   }
+}

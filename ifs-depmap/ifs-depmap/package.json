@@ -1,0 +1,16 @@
+{
+  "name": "ifs-depmap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Visualize and check dependencies across IFS Cloud Core and Cust layers",
+  "scripts": {
+    "build:ui": "node ui/build.mjs",
+    "demo": "cargo run -q --bin ifsdep -- --core fixtures/core --cust fixtures/cust --json ui/.build/graph.json && node ui/build.mjs --demo ui/.build/graph.json",
+    "test": "cargo test",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "typescript": "^5.6"
+  }
+}

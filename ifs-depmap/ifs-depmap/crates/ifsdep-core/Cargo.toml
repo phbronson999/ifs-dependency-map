@@ -1,0 +1,17 @@
+[package]
+name = "ifsdep-core"
+version = "0.1.0"
+edition = "2021"
+description = "Indexes IFS Cloud Core + Cust source folders into a dependency graph and flags problems"
+
+# Deliberately dependency-free: std only. The JSON writer, folder walk and
+# cycle detection are small enough to own.
+
+[lib]
+name = "ifsdep_core"
+
+[[bin]]
+name = "ifsdep"
+path = "src/bin/ifsdep.rs"
+
+[dependencies]

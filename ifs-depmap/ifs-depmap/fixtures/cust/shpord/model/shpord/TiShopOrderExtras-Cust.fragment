@@ -1,0 +1,24 @@
+fragment TiShopOrderExtras;
+component SHPORD;
+layer Cust;
+description "Pure Cust fragment with extra shop order helpers";
+
+include fragment ShopOrderCommon;
+
+----------------------------- CLIENT FRAGMENTS ------------------------------
+
+group TiExtrasGroup for ShopOrderNoteStructure {
+   field Note;
+}
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+-- Copied from ShopOrderCommon instead of reusing it: duplicate definition.
+structure ShopOrderNoteStructure {
+   attribute OrderNo Text;
+   attribute Note Text;
+}
+
+function TiGetExtraInfo Text {
+   parameter OrderNo Text;
+}

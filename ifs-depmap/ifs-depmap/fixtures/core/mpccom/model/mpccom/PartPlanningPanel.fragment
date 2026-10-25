@@ -1,0 +1,19 @@
+fragment PartPlanningPanel;
+component MPCCOM;
+layer Core;
+description "Part panel used on several part screens";
+
+include fragment PartAvailabilityPanel;
+
+----------------------------- CLIENT FRAGMENTS ------------------------------
+
+group PartPlanningPanelGroup for PartPlanningPanelStructure {
+   label = "";
+}
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+structure PartPlanningPanelStructure {
+   attribute PartNo Text;
+   attribute Contract Text;
+}

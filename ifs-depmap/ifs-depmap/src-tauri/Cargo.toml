@@ -1,0 +1,17 @@
+[package]
+name = "ifs-depmap"
+version = "0.1.0"
+edition = "2021"
+description = "IFS Dependency Map desktop app"
+
+[lib]
+name = "ifs_depmap_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ifsdep-core = { path = "../crates/ifsdep-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"

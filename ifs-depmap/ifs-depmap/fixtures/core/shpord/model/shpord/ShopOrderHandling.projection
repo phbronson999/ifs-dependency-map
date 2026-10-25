@@ -1,0 +1,54 @@
+----------------------------------------------------------------------------------------------------
+-- Date        Sign    History
+-- ----------  ------  -----------------------------------------------------------------------------
+-- 230401      FIXTUR  Test fixture for ifs-depviz.
+----------------------------------------------------------------------------------------------------
+projection ShopOrderHandling;
+component SHPORD;
+layer Core;
+description "Manage shop orders";
+category Users;
+
+include fragment ShopOrderCommon;
+include fragment UserAllowedSiteLovSelector;
+@DynamicComponentDependency PROJ
+include fragment ProjectLovSelector;
+
+----------------------------- MAIN ENTRY POINTS -----------------------------
+entityset ShopOrderSet for ShopOrder;
+
+------------------------------ ENTITY DETAILS -------------------------------
+entity ShopOrder {
+   crud = Read, Update;
+   from = "shop_ord";
+   keys = OrderNo;
+   attribute OrderNo Text;
+   attribute Contract Text;
+   attribute ProjectId Text;
+   attribute OrderType Enumeration(ShopOrderType);
+   attribute PartDescription Text {
+      fetch = "Shop_Order_API.Get_Part_Description(contract, part_no)";
+      editable = [false];
+   }
+   reference ContractRef(Contract) to UserAllowedSiteLov(Contract) {
+      label = "Site";
+   }
+   @DynamicComponentDependency PROJ
+   reference ProjectRef(ProjectId) to ProjectLov(ProjectId);
+   array OrderLinesArray(OrderNo) to OrderLine(OrderNo);
+}
+
+------------------------------- ENUMERATIONS --------------------------------
+enumeration ShopOrderType {
+   value = "Normal";
+   value = "Rework";
+}
+
+---------------------------------- ACTIONS ----------------------------------
+action ReleaseOrder {
+   initialcheck implementation;
+   parameter OrderNo Text;
+}
+
+--------------------------------- FUNCTIONS ---------------------------------
+function GetDefaultSite Text;

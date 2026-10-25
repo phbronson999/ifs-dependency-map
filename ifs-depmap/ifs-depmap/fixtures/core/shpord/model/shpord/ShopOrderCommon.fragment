@@ -1,0 +1,35 @@
+fragment ShopOrderCommon;
+component SHPORD;
+layer Core;
+description "Shared shop order constructs";
+
+include fragment OrderLinesFragment;
+
+----------------------------- CLIENT FRAGMENTS ------------------------------
+
+dialog ShopOrderNoteDialog for ShopOrderNoteStructure {
+   label = "Order Note";
+   group ShopOrderNoteGroup;
+   commandgroup ButtonCmdGroup {
+      command Ok;
+   }
+}
+
+group ShopOrderNoteGroup for ShopOrderNoteStructure {
+   field Note {
+      multiline = true;
+   }
+}
+
+command Ok for ShopOrderNoteStructure {
+   execute {
+      exit OK;
+   }
+}
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+structure ShopOrderNoteStructure {
+   attribute OrderNo Text;
+   attribute Note Text;
+}

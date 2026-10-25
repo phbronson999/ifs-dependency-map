@@ -1,0 +1,23 @@
+projection ShopOrderHandling;
+component SHPORD;
+layer Cust;
+description "Customer additions to Manage shop orders";
+category Users;
+
+include fragment TiTraceback;
+include fragment DoesNotExistSelector;
+
+@Override
+entity ShopOrder {
+   attribute TiTraceId Text;
+   reference TiTraceRef(TiTraceId) to TiTracebackLine(TraceId);
+}
+
+-- Forgot @Override: clashes with the Core declaration.
+function GetDefaultSite Text;
+
+-- Overrides something that is not in any indexed file (likely an LU entity).
+@Override
+entity ShopOrderOperation {
+   attribute TiNote Text;
+}

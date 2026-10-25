@@ -1,0 +1,41 @@
+client ShopOrder;
+component SHPORD;
+layer Core;
+projection ShopOrderHandling;
+
+include fragment ShopOrderCommon;
+include fragment UserAllowedSiteLovSelector;
+
+----------------------------- NAVIGATOR ENTRIES -----------------------------
+
+-------------------------------- MAIN PAGES ---------------------------------
+page Form using ShopOrderSet {
+   label = "Shop Order";
+   selector ShopOrderSelector;
+   group ShopOrderGroup;
+   list OrderLinesList(OrderLinesArray);
+}
+
+-------------------------------- COMMANDS -----------------------------------
+command ReleaseCommand for ShopOrder {
+   label = "Release";
+   enabled = [Objstate = "Planned"];
+   execute {
+      call ReleaseOrder(OrderNo);
+   }
+}
+
+--------------------------------- SELECTORS ---------------------------------
+selector ShopOrderSelector for ShopOrder {
+   label = "${OrderNo}";
+   static OrderNo;
+}
+
+---------------------------------- GROUPS -----------------------------------
+group ShopOrderGroup for ShopOrder {
+   label = "General";
+   field OrderNo;
+   lov ContractRef with ReferenceUserAllowedSiteLovSelector {
+      label = "Site";
+   }
+}

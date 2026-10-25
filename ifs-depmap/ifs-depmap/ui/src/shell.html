@@ -1,0 +1,68 @@
+<div class="app" id="app" data-pane="graph">
+  <header class="topbar">
+    <div class="brand">
+      <h1>IFS Dependency Map</h1>
+      <span class="stats" id="stats"></span>
+    </div>
+    <div class="roots" id="roots"></div>
+    <div class="spacer"></div>
+    <div class="search">
+      <input id="search" type="search" placeholder="Find a fragment, entity, procedure…" autocomplete="off" spellcheck="false" aria-label="Search the index">
+      <div class="search-results" id="search-results" hidden></div>
+    </div>
+    <div class="panel-toggles" role="group" aria-label="Panels">
+      <button class="icon-btn" id="toggle-left" data-panel="left" aria-pressed="true" title="Toggle Findings panel (Ctrl+B)" aria-label="Toggle Findings panel">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect class="fill" x="2" y="3" width="4" height="10"/><rect class="frame" x="1.5" y="2.5" width="13" height="11" rx="1.5"/><line class="frame" x1="6" y1="3" x2="6" y2="13"/></svg>
+      </button>
+      <button class="icon-btn" id="toggle-right" data-panel="right" aria-pressed="true" title="Toggle Details panel (Ctrl+Alt+B)" aria-label="Toggle Details panel">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect class="fill" x="10" y="3" width="4" height="10"/><rect class="frame" x="1.5" y="2.5" width="13" height="11" rx="1.5"/><line class="frame" x1="10" y1="3" x2="10" y2="13"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <aside class="pane findings" aria-label="Findings">
+    <div class="pane-head"><h2>Findings</h2></div>
+    <div class="sev-filters" id="sev-filters"></div>
+    <div class="pane-body"><ul class="finding-list" id="finding-list"></ul></div>
+  </aside>
+
+  <main class="pane graph" aria-label="Dependency graph">
+    <div class="graph-toolbar">
+      <div class="levels" id="levels" role="group" aria-label="Zoom level">
+        <button data-level="components" aria-pressed="true">Components</button>
+        <button data-level="units" aria-pressed="false" title="A Core file and its -Cust overlay count as one">Files</button>
+        <button data-level="objects" aria-pressed="false">Objects</button>
+      </div>
+      <div class="crumbs" id="crumbs"></div>
+    </div>
+    <div class="notice" id="notice" hidden></div>
+    <svg class="canvas" id="canvas" role="img" aria-label="Dependency graph">
+      <defs>
+        <marker id="m-default" class="m-default" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="m-Cust" class="m-Cust" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="m-hot" class="m-hot" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="m-sel" class="m-sel" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <g id="viewport"></g>
+    </svg>
+    <div class="filters" id="filters"></div>
+    <div class="zoom">
+      <button class="btn" data-zoom="in" aria-label="Zoom in">+</button>
+      <button class="btn" data-zoom="out" aria-label="Zoom out">−</button>
+      <button class="btn" data-zoom="fit" aria-label="Fit to screen">⤢</button>
+    </div>
+  </main>
+
+  <aside class="pane details" aria-label="Details">
+    <div class="pane-head"><h2 id="details-head">Overview</h2></div>
+    <div class="pane-body" id="details"></div>
+  </aside>
+
+  <nav class="tabbar" id="tabbar">
+    <button data-pane="findings" aria-pressed="false">Findings</button>
+    <button data-pane="graph" aria-pressed="true">Graph</button>
+    <button data-pane="details" aria-pressed="false">Details</button>
+  </nav>
+</div>
+<input type="file" id="load-json" accept=".json,application/json" hidden>
+<div class="toast" id="toast" role="status" hidden></div>

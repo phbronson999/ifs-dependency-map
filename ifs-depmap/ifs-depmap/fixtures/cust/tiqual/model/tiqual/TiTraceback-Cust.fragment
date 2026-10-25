@@ -1,0 +1,16 @@
+fragment TiTraceback;
+component TIQUAL;
+layer Cust;
+description "Traceback lines (pure Cust)";
+
+include fragment UserAllowedSiteLovSelector;
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+entity TiTracebackLine {
+   crud = Read;
+   from = "ti_traceback_line";
+   keys = TraceId;
+   attribute TraceId Text;
+   attribute Contract Text;
+}

@@ -1,0 +1,11 @@
+client ShopOrder;
+component SHPORD;
+layer Cust;
+projection ShopOrderHandling;
+
+include fragment TiQualityChecks;
+
+@Override
+group ShopOrderGroup for ShopOrder {
+   field TiTraceId;
+}

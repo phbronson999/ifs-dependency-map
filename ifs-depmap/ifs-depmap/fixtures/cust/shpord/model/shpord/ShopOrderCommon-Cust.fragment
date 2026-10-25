@@ -1,0 +1,15 @@
+fragment ShopOrderCommon;
+component SHPORD;
+layer Cust;
+description "Customer additions to shared shop order constructs";
+
+include fragment TiShopOrderExtras;
+include fragment QualityInspectionLovSelector;
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+@Override
+structure ShopOrderNoteStructure {
+   attribute TiInspectionCode Text;
+   reference TiInspectionRef(TiInspectionCode) to QualityInspectionLov(InspectionCode);
+}

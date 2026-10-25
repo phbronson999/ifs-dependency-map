@@ -1,0 +1,19 @@
+fragment TiQualityChecks;
+component TIQUAL;
+layer Cust;
+description "Quality check dialog";
+
+include fragment TiQualityLov;
+
+----------------------------- CLIENT FRAGMENTS ------------------------------
+
+dialog TiQualityCheckDialog for TiQualityCheckStructure {
+   label = "Quality Check";
+}
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+structure TiQualityCheckStructure {
+   attribute CheckCode Text;
+   reference CheckRef(CheckCode) to TiQualityCode(Code);
+}

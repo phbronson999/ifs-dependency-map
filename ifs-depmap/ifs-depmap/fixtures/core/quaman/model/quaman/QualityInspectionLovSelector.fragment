@@ -1,0 +1,13 @@
+fragment QualityInspectionLovSelector;
+component QUAMAN;
+layer Core;
+description "List of values for inspection codes";
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+query QualityInspectionLov {
+   from = "quality_inspection_lov";
+   keys = InspectionCode;
+   attribute InspectionCode Text;
+   attribute Description Text;
+}

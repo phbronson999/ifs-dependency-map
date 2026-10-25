@@ -1,0 +1,13 @@
+fragment ProjectLovSelector;
+component PROJ;
+layer Core;
+description "List of values for projects";
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+query ProjectLov {
+   from = "project_lov";
+   keys = ProjectId;
+   attribute ProjectId Text;
+   attribute Name Text;
+}

@@ -1,0 +1,22 @@
+fragment OrderLinesFragment;
+component SHPORD;
+layer Core;
+description "Order lines list";
+
+----------------------------- CLIENT FRAGMENTS ------------------------------
+
+list OrderLinesList for OrderLine {
+   field LineNo;
+   field PartNo;
+}
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+entity OrderLine {
+   crud = Read;
+   from = "shop_order_line";
+   keys = OrderNo, LineNo;
+   attribute OrderNo Text;
+   attribute LineNo Number;
+   attribute PartNo Text;
+}

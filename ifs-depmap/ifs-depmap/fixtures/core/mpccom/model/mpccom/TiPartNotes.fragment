@@ -1,0 +1,12 @@
+fragment TiPartNotes;
+component MPCCOM;
+layer Cust;
+description "Misplaced: Cust code inside the Core folder";
+
+include fragment TiQualityLov;
+
+--------------------------- PROJECTION FRAGMENTS ----------------------------
+
+structure TiPartNotesStructure {
+   attribute Note Text;
+}

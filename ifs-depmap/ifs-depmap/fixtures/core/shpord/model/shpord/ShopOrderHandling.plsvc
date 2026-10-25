@@ -1,0 +1,18 @@
+-----------------------------------------------------------------------------
+--  Logical unit: ShopOrderHandling
+--  Component:    SHPORD
+-----------------------------------------------------------------------------
+layer Core;
+
+FUNCTION Get_Default_Site___ RETURN VARCHAR2
+IS
+BEGIN
+   RETURN User_Allowed_Site_API.Get_Default_Site;
+END Get_Default_Site___;
+
+PROCEDURE Release_Order___ (
+   order_no_ IN VARCHAR2 )
+IS
+BEGIN
+   Shop_Order_API.Release__(order_no_);
+END Release_Order___;

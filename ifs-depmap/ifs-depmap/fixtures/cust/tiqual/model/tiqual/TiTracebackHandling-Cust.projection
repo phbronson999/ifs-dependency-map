@@ -1,0 +1,17 @@
+projection TiTracebackHandling;
+component TIQUAL;
+layer Cust;
+description "Traceback screen";
+category Users;
+
+include fragment TiTraceback;
+
+----------------------------- MAIN ENTRY POINTS -----------------------------
+entityset TiTracebackLineSet for TiTracebackLine;
+
+-- Overrides the base generated from the pure Cust fragment, not a Core file.
+@Override
+entity TiTracebackLine {
+   attribute SiteDescription Text;
+   reference SiteRef(Contract) to UserAllowedSiteLov(Contract);
+}

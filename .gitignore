@@ -1,0 +1,9 @@
+# Original downloads
+*.zip
+
+# Real IFS source: read-only input, never tracked
+/project-parent-25r1/
+
+# Build output (also ignored by ifs-depmap/ifs-depmap/.gitignore)
+target/
+node_modules/
