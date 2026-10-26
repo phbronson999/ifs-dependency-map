@@ -45,6 +45,9 @@ const ui = {
   get depth(): Depth { return this.depthByLevel[this.level]; },
   /** Draw only what Cust touches (declared in Cust files, or overridden / used by Cust code). */
   custOnly: false,
+  /** The selected node's color, and how strongly it glows and fills (10–100). */
+  selColor: "#f5a524",
+  selStrength: 60,
   /** How wide a band (or the layered graph) gets before it wraps, as a multiple of the canvas width. */
   width: "normal" as keyof typeof BAND_WIDTHS,
   /** Group boxes and band extents from the last banded layout. */
@@ -73,6 +76,14 @@ const svgNS = "http://www.w3.org/2000/svg";
 /** Which side panels are open, and their widths in px once dragged (null: the default). */
 const panels = { left: true, right: true, leftW: null as number | null, rightW: null as number | null };
 const PANEL_MIN = 220;
+
+/** Sets the selected node's color, fill and glow from the Selection controls. */
+function applySelectionStyle() {
+  const root = document.documentElement.style;
+  root.setProperty("--sel", ui.selColor);
+  root.setProperty("--sel-fill", `color-mix(in srgb, ${ui.selColor} ${Math.round(ui.selStrength * 0.35)}%, transparent)`);
+  root.setProperty("--sel-glow", `${Math.round(ui.selStrength / 7)}px`);
+}
 
 function applyPanels() {
   const app = $("app");
@@ -114,10 +125,14 @@ function boot() {
       ui.depthByLevel[l] = byLevel?.[l] === "chain" || byLevel?.[l] === "direct" ? byLevel[l] : old;
     }
     ui.custOnly = localStorage.getItem("ifsdepmap.custOnly") === "true";
+    ui.selColor = /^#[0-9a-f]{6}$/i.test(localStorage.getItem("ifsdepmap.selColor") ?? "") ? localStorage.getItem("ifsdepmap.selColor")! : ui.selColor;
+    const strength = Number(localStorage.getItem("ifsdepmap.selStrength"));
+    if (strength >= 10 && strength <= 100) ui.selStrength = strength;
     const w = localStorage.getItem("ifsdepmap.width");
     if (w && w in BAND_WIDTHS) ui.width = w as keyof typeof BAND_WIDTHS;
   } catch { /* storage unavailable */ }
   applyPanels();
+  applySelectionStyle();
   bindEvents();
   if (invoke) {
     try {
@@ -292,6 +307,7 @@ function renderToolbar() {
   } else if (ui.level === "objects") {
     filters += `<div class="chipset"><span class="lbl">Links</span>${OBJECT_EDGE_KINDS.map((k) => chip("edge", k, EDGE_LABEL[k], ui.edgeKinds.has(k))).join("")}</div>`;
   }
+  filters += `<div class="chipset selctl" title="How the selected item is drawn"><span class="lbl">Selection</span><input type="color" id="sel-color" value="${esc(ui.selColor)}" aria-label="Selection color"><input type="range" id="sel-strength" min="10" max="100" step="5" value="${ui.selStrength}" aria-label="Selection brightness"></div>`;
   filters += `<div class="chipset" title="How wide a band gets before it wraps onto another line"><span class="lbl">Width</span>${
     Object.entries(BAND_WIDTHS).map(([k, w]) => chip("width", k, w.label, ui.width === k)).join("")
   }</div>`;
@@ -1130,6 +1146,18 @@ function bindResizers() {
 
 function bindEvents() {
   bindResizers();
+  // Selection color and brightness: applied live, remembered.
+  document.addEventListener("input", (ev) => {
+    const t = ev.target as HTMLInputElement;
+    if (t.id !== "sel-color" && t.id !== "sel-strength") return;
+    if (t.id === "sel-color") ui.selColor = t.value;
+    else ui.selStrength = Number(t.value);
+    applySelectionStyle();
+    try {
+      localStorage.setItem("ifsdepmap.selColor", ui.selColor);
+      localStorage.setItem("ifsdepmap.selStrength", String(ui.selStrength));
+    } catch { /* storage unavailable */ }
+  });
   document.addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement;
     const panelBtn = t.closest<HTMLElement>("[data-panel]");

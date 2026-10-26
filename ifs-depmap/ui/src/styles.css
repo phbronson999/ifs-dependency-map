@@ -237,7 +237,8 @@ svg.canvas.panning { cursor: grabbing; }
 .node text.glyph { fill: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; }
 .node { cursor: pointer; }
 .node:hover rect.box { stroke-width: 2.2; }
-.node.is-sel rect.box { stroke: var(--accent); stroke-width: 2.6; stroke-dasharray: none; }
+/* The selected node has its own color (set in the app, default amber), apart from the blue of its links. */
+.node.is-sel rect.box { stroke: var(--sel, #f5a524); stroke-width: 3.2; stroke-dasharray: none; fill: var(--sel-fill, transparent); filter: drop-shadow(0 0 var(--sel-glow, 6px) var(--sel, #f5a524)); }
 .node.is-hot rect.box { stroke: var(--error); stroke-width: 2.4; fill: var(--error-soft); stroke-dasharray: none; }
 .node .badge circle { stroke: var(--raised); stroke-width: 2; }
 .node .badge.error circle { fill: var(--error); }
@@ -422,3 +423,8 @@ marker.m-sel path { fill: var(--accent); }
 .diff td.y .no { color: var(--error); }
 .cust-code { margin: 6px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; background: var(--cust-soft); border: 1px solid var(--line); border-left: 3px solid var(--cust); border-radius: var(--r); font: 11.5px/1.5 var(--font-mono); white-space: pre; }
 .list-note { padding: 8px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--surface); }
+
+/* Selection color and brightness controls in the bottom bar. */
+.selctl { display: inline-flex; align-items: center; gap: 6px; }
+.selctl input[type="color"] { width: 26px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: none; cursor: pointer; }
+.selctl input[type="range"] { width: 84px; accent-color: var(--sel, #f5a524); }
