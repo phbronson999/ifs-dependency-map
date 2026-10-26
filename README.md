@@ -166,8 +166,11 @@ The desktop app remembers the two folders. "Open" on any file runs
 
 ## Not done yet
 
-- The rest of `.entity` (references, state machine) and `.enumeration`.
-  Only the table and view names and the attributes are read so far.
-- Tables generated for projection `virtual`s (`*_VRT`), which show up as undefined relations.
-- `lov X with ReferenceYSelector` links.
-- Persisted index with incremental rescans (indexing is fast enough to run in full for now: about 0.2 s for 6,000 files).
+What's missing or planned is tracked in [GitHub issues](https://github.com/phbronson999/ifs-dependency-map/issues);
+add new ones there. At the time of writing:
+
+- [#6](https://github.com/phbronson999/ifs-dependency-map/issues/6) `.entity` state machines and `.enumeration` files
+- [#7](https://github.com/phbronson999/ifs-dependency-map/issues/7) tables generated for projection `virtual`s (`*_VRT`)
+- [#8](https://github.com/phbronson999/ifs-dependency-map/issues/8) `lov X with ReferenceYSelector` links
+- [#9](https://github.com/phbronson999/ifs-dependency-map/issues/9) persisted index with incremental rescans
+- [#10](https://github.com/phbronson999/ifs-dependency-map/issues/10) more places for DATATYPE_MISMATCH to list
