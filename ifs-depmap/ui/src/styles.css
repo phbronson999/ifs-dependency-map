@@ -428,3 +428,5 @@ marker.m-sel path { fill: var(--accent); }
 .selctl { display: inline-flex; align-items: center; gap: 6px; }
 .selctl input[type="color"] { width: 26px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: none; cursor: pointer; }
 .selctl input[type="range"] { width: 84px; accent-color: var(--sel, #f5a524); }
+.details-filter { display: flex; gap: 6px; margin: 2px 0 8px; }
+p.muted { color: var(--muted); font-size: 12.5px; }

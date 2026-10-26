@@ -45,6 +45,8 @@ const ui = {
   get depth(): Depth { return this.depthByLevel[this.level]; },
   /** Draw only what Cust touches (declared in Cust files, or overridden / used by Cust code). */
   custOnly: false,
+  /** Hide Core-only findings in the details panel (when the Findings list shows them). */
+  detailsHideCore: false,
   /** The selected node's color, and how strongly it glows and fills (10–100). */
   selColor: "#f5a524",
   selStrength: 60,
@@ -125,6 +127,7 @@ function boot() {
       ui.depthByLevel[l] = byLevel?.[l] === "chain" || byLevel?.[l] === "direct" ? byLevel[l] : old;
     }
     ui.custOnly = localStorage.getItem("ifsdepmap.custOnly") === "true";
+    ui.detailsHideCore = localStorage.getItem("ifsdepmap.detailsHideCore") === "true";
     ui.selColor = /^#[0-9a-f]{6}$/i.test(localStorage.getItem("ifsdepmap.selColor") ?? "") ? localStorage.getItem("ifsdepmap.selColor")! : ui.selColor;
     const strength = Number(localStorage.getItem("ifsdepmap.selStrength"));
     if (strength >= 10 && strength <= 100) ui.selStrength = strength;
@@ -740,11 +743,22 @@ function nodeLink(id: string) {
   return `<button data-action="goto" data-node="${esc(id)}"><span class="k">component</span><span class="n">${esc(id)}</span></button>`;
 }
 
+/** The findings on what the details panel shows: Cust ones first, then by severity. Core-only
+ *  findings (shown when the Findings list's Core chip is on) can be hidden here on their own. */
 function findingLinks(list: Finding[]) {
   if (!list.length) return "";
-  return `<section><h4>Findings</h4><div class="linklist">${list
-    .map((f) => `<button data-action="finding" data-f="${f.id}"><span class="k"><span class="dot ${f.severity}" style="display:inline-block"></span> ${esc(f.rule)}</span><span class="n">${esc(f.title)}</span></button>`)
-    .join("")}</div></section>`;
+  const coreOnly = list.filter((f) => !f.involves_cust).length;
+  const shown = list
+    .filter((f) => f.involves_cust || !ui.detailsHideCore)
+    .sort((a, b) => Number(b.involves_cust) - Number(a.involves_cust) || SEV_RANK[a.severity] - SEV_RANK[b.severity]);
+  const toggle = coreOnly
+    ? `<button class="sev-chip scope" data-details-core aria-pressed="${!ui.detailsHideCore}" title="Findings here that involve only Core files: you won't fix them, but they show what is affected"><span class="pill core">Core</span>only <b>${coreOnly}</b></button>`
+    : "";
+  const row = (f: Finding) =>
+    `<button data-action="finding" data-f="${f.id}"><span class="k"><span class="dot ${f.severity}" style="display:inline-block"></span> ${esc(f.rule)}${f.involves_cust ? "" : ` <span class="pill core">Core</span>`}</span><span class="n">${esc(f.title)}</span></button>`;
+  return `<section><h4>Findings</h4>${toggle ? `<div class="details-filter">${toggle}</div>` : ""}${
+    shown.length ? `<div class="linklist">${shown.map(row).join("")}</div>` : `<p class="muted">Only Core findings here; they're hidden.</p>`
+  }</section>`;
 }
 
 function renderDetails() {
@@ -768,10 +782,33 @@ function renderDetails() {
 function overviewHtml(m: Model) {
   const s = m.idx.stats;
   const kinds = Object.entries(s.by_kind).map(([k, v]) => `<dt>.${esc(k === "deployini" ? "ini" : k)}</dt><dd>${v.toLocaleString()}</dd>`).join("");
-  const errors = m.findings.filter((f) => f.severity === "error").length;
+  // What you can fix: findings that involve Cust files. Core-only ones (listed when the Findings
+  // list's Core chip is on) are summed up apart, and the panel's Core toggle hides them.
+  const cust = m.findings.filter((f) => f.involves_cust);
+  const core = m.findings.filter((f) => !f.involves_cust);
+  const errors = cust.filter((f) => f.severity === "error").length;
+  const byRule = (list: Finding[]) => {
+    const rows = new Map<string, Record<Severity, number>>();
+    for (const f of list) {
+      const r = rows.get(f.rule) ?? { error: 0, warning: 0, info: 0 };
+      r[f.severity]++;
+      rows.set(f.rule, r);
+    }
+    return [...rows.entries()]
+      .sort((a, b) => b[1].error - a[1].error || b[1].warning - a[1].warning || a[0].localeCompare(b[0]))
+      .map(([rule, c]) => `<dt class="mono">${esc(rule)}</dt><dd>${(["error", "warning", "info"] as Severity[]).filter((k) => c[k]).map((k) => `<span class="dot ${k}" style="display:inline-block"></span> ${c[k]}`).join(" &nbsp;")}</dd>`)
+      .join("");
+  };
+  const coreToggle = core.length
+    ? `<div class="details-filter"><button class="sev-chip scope" data-details-core aria-pressed="${!ui.detailsHideCore}" title="Findings that involve only Core files: you won't fix them, but they show what is affected"><span class="pill core">Core</span>only <b>${core.length.toLocaleString()}</b></button></div>`
+    : "";
+  const findingsSection = `<section><h4>Findings you can fix</h4>${cust.length ? `<dl class="kv">${byRule(cust)}</dl>` : `<p class="muted">None involve Cust files.</p>`}${coreToggle}${
+    core.length && !ui.detailsHideCore ? `<h4>Core only</h4><dl class="kv">${byRule(core)}</dl>` : ""
+  }</section>`;
   return `<div class="d">
 <h3>${errors ? `${errors} thing${errors === 1 ? "" : "s"} to fix` : "No blocking problems"}</h3>
 <p>Each box is a component. Lines are includes, projection use and PL/SQL calls that cross components; the number is how many. Double-tap a component to see its files, and a file to see what it declares.</p>
+${findingsSection}
 <section><h4>Indexed</h4><dl class="kv">${kinds}<dt>units</dt><dd>${s.units.toLocaleString()}</dd><dt>objects</dt><dd>${s.objects.toLocaleString()}</dd></dl></section>
 ${m.idx.core_root || m.idx.cust_root ? `<section><h4>Folders</h4><dl class="kv"><dt>Core</dt><dd class="mono">${esc(m.idx.core_root ?? "—")}</dd><dt>Cust</dt><dd class="mono">${esc(m.idx.cust_root ?? "—")}</dd></dl></section>` : ""}
 ${m.idx.notes.length ? `<section><h4>Notes</h4>${m.idx.notes.slice(0, 20).map((n) => `<p class="mono">${esc(n)}</p>`).join("")}</section>` : ""}
@@ -1207,6 +1244,12 @@ function bindEvents() {
     }
     const jump = t.closest<HTMLElement>("[data-jump]");
     if (jump) { jumpTo(jump.dataset.jump!); return; }
+    if (t.closest("[data-details-core]")) {
+      ui.detailsHideCore = !ui.detailsHideCore;
+      try { localStorage.setItem("ifsdepmap.detailsHideCore", String(ui.detailsHideCore)); } catch { /* storage unavailable */ }
+      renderDetails();
+      return;
+    }
     if (t.closest("[data-upgrade]")) {
       ui.upgradeOnly = !ui.upgradeOnly;
       renderFindings();
