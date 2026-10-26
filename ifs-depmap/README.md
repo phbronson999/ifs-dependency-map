@@ -112,7 +112,20 @@ ui/                   TypeScript UI, no runtime dependencies (own SVG renderer +
 src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 ```
 
-## Running
+## Install (Windows)
+
+Download `IFS Dependency Map_<version>_x64-setup.exe` from the
+[latest release](https://github.com/phbronson999/ifs-dependency-map/releases/latest) and run it.
+No Rust or Node is needed. The `.msi` there does the same for managed installs.
+
+- The installer isn't code-signed, so Windows SmartScreen says "Windows protected your PC" the
+  first time: choose **More info → Run anyway**.
+- It uses Microsoft Edge WebView2, which Windows 10 and 11 normally already have; the installer
+  fetches it if it's missing.
+- In the app, choose your Core and Cust folders (and, for upgrades, the previous Core), then
+  **Index**. "Open" buttons use VS Code's `code` command, so VS Code must be on the PATH.
+
+## Building from source
 
 ```sh
 cargo test                                         # 39 tests
@@ -120,6 +133,7 @@ cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json 
 
 npm install                                        # typescript + tauri cli
 npm run tauri dev                                  # desktop app
+npm run tauri build                                # installers in src-tauri/target/release/bundle/
 npm run demo                                       # ui/dist/demo.html with the sample data embedded
 ```
 
