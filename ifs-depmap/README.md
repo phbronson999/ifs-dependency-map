@@ -125,6 +125,17 @@ No Rust or Node is needed. The `.msi` there does the same for managed installs.
 - In the app, choose your Core and Cust folders (and, for upgrades, the previous Core), then
   **Index**. "Open" buttons use VS Code's `code` command, so VS Code must be on the PATH.
 
+## Releasing
+
+Releases are built on a Windows machine and published with the GitHub CLI:
+
+1. Bump `version` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
+2. `npm run tauri build`; the installers land in `src-tauri/target/release/bundle/nsis/` (`.exe`)
+   and `bundle/msi/` (`.msi`).
+3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. `gh release create vX.Y.Z --repo phbronson999/ifs-dependency-map --title "vX.Y.Z" --notes-file <notes>`
+   with both installers as assets; it becomes the latest release that the Install link above points to.
+
 ## Building from source
 
 ```sh
