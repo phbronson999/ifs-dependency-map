@@ -70,12 +70,19 @@ const svgNS = "http://www.w3.org/2000/svg";
 
 // ---------------------------------------------------------------- panels
 
-const panels = { left: true, right: true };
+/** Which side panels are open, and their widths in px once dragged (null: the default). */
+const panels = { left: true, right: true, leftW: null as number | null, rightW: null as number | null };
+const PANEL_MIN = 220;
 
 function applyPanels() {
   const app = $("app");
   app.dataset.left = panels.left ? "open" : "closed";
   app.dataset.right = panels.right ? "open" : "closed";
+  // A dragged width applies while the panel is open; closed, the stylesheet's 0 wins.
+  for (const [side, w] of [["left", panels.leftW], ["right", panels.rightW]] as const) {
+    if ((side === "left" ? panels.left : panels.right) && w) app.style.setProperty(`--${side}-w`, `${w}px`);
+    else app.style.removeProperty(`--${side}-w`);
+  }
   $("toggle-left").setAttribute("aria-pressed", String(panels.left));
   $("toggle-right").setAttribute("aria-pressed", String(panels.right));
 }
@@ -92,7 +99,12 @@ function togglePanel(side: "left" | "right") {
 function boot() {
   try {
     const saved = JSON.parse(localStorage.getItem("ifsdepmap.panels") ?? "null");
-    if (saved) { panels.left = saved.left !== false; panels.right = saved.right !== false; }
+    if (saved) {
+      panels.left = saved.left !== false;
+      panels.right = saved.right !== false;
+      panels.leftW = typeof saved.leftW === "number" ? saved.leftW : null;
+      panels.rightW = typeof saved.rightW === "number" ? saved.rightW : null;
+    }
     ui.showCore = localStorage.getItem("ifsdepmap.showCore") === "true";
     if (localStorage.getItem("ifsdepmap.selectMode") === "highlight") ui.selectMode = "highlight";
     // One depth per level; the older single setting seeds all three.
@@ -1068,7 +1080,48 @@ function renderSearch() {
 
 let lastTap = { id: "", t: 0 };
 
+/** Drag a panel's inner edge to resize it; double-click resets it. Widths are remembered. */
+function bindResizers() {
+  const save = () => { try { localStorage.setItem("ifsdepmap.panels", JSON.stringify(panels)); } catch { /* storage unavailable */ } };
+  for (const handle of document.querySelectorAll<HTMLElement>("[data-resize]")) {
+    const side = handle.dataset.resize as "left" | "right";
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      document.body.classList.add("resizing");
+      handle.classList.add("active");
+      const app = $("app").getBoundingClientRect();
+      const move = (ev: PointerEvent) => {
+        // Leave the graph at least 320px.
+        const max = Math.max(PANEL_MIN, app.width - 320 - (side === "left" ? (panels.right ? $("details").parentElement!.getBoundingClientRect().width : 0) : (panels.left ? $("finding-list").closest(".pane")!.getBoundingClientRect().width : 0)));
+        const w = side === "left" ? ev.clientX - app.left : app.right - ev.clientX;
+        const clamped = Math.round(Math.min(max, Math.max(PANEL_MIN, w)));
+        if (side === "left") panels.leftW = clamped; else panels.rightW = clamped;
+        applyPanels();
+      };
+      const up = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+        document.body.classList.remove("resizing");
+        handle.classList.remove("active");
+        save();
+        applyView();
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    });
+    handle.addEventListener("dblclick", () => {
+      if (side === "left") panels.leftW = null; else panels.rightW = null;
+      applyPanels();
+      save();
+    });
+  }
+}
+
 function bindEvents() {
+  bindResizers();
   document.addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement;
     const panelBtn = t.closest<HTMLElement>("[data-panel]");
