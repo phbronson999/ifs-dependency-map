@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="assets/hero.gif" width="860"
+       alt="IFS Dependency Map demo: the Components view shows IFS Cloud components in bands by how much Cust code touches them; selecting one filters to its links; the Files and Objects views group code by file type and file; the Findings panel lists upgrade findings, and opening one shows the Core diff (a cursor where IFS added customer_info) next to the Cust attribute that now conflicts with it.">
+</p>
+<p align="center"><a href="assets/hero.mp4">Watch the full walkthrough (2 min, MP4)</a></p>
+
 # IFS Dependency Map
 
 Indexes an IFS Cloud **Core** folder and a **Cust** folder into one dependency
