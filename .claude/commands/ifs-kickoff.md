@@ -2,7 +2,7 @@
 description: First session for IFS Dependency Map, covering the build, indexing the real IFS folders and checking parser accuracy
 ---
 
-Read `ifs-depmap/CLAUDE.md` and `ifs-depmap/README.md` first. Work from
+Read `ifs-depmap/CLAUDE.md` and the root `README.md` first. Work from
 `ifs-depmap`. This project was scaffolded without ever being run against real IFS
 code, and the Tauri shell has never been compiled. Your job this session is to get it
 building and then find out how well the parsers match the real files. Don't change the
