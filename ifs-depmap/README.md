@@ -114,7 +114,7 @@ src-tauri/            Tauri 2 shell: folder picker, indexing, open in VS Code
 
 ## Install (Windows)
 
-Download `IFS Dependency Map_<version>_x64-setup.exe` from the
+Download `IFS.Dependency.Map_<version>_x64-setup.exe` from the
 [latest release](https://github.com/phbronson999/ifs-dependency-map/releases/latest) and run it.
 No Rust or Node is needed. The `.msi` there does the same for managed installs.
 
