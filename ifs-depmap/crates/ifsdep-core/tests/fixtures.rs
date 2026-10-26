@@ -478,7 +478,7 @@ fn objects_link_all_the_way_down_to_tables() {
 fn upgrade_comparison_says_what_changed_under_each_customization() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
     let (core, cust, prev) = (root.join("core"), root.join("cust"), root.join("prev-core"));
-    let idx = index(&IndexOptions { core: Some(&core), cust: Some(&cust), prev_core: Some(&prev) });
+    let idx = index(&IndexOptions { core: Some(&core), cust: Some(&cust), prev_core: Some(&prev), ..Default::default() });
     let mut got: Vec<(String, Severity, String)> = idx
         .findings
         .iter()
@@ -612,4 +612,18 @@ fn datatype_mismatch_follows_the_value_to_its_origin() {
     // Both Get_Vendor_No exist: the hand-written overload and the generated getter.
     let vendor: Vec<bool> = idx.objects.iter().filter(|o| o.name == "Get_Vendor_No").map(|o| o.generated).collect();
     assert_eq!(vendor, [false, true]);
+}
+
+#[test]
+fn indexing_stops_when_cancelled() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let (core, cust) = (root.join("core"), root.join("cust"));
+    let flag = AtomicBool::new(false);
+    let opts = IndexOptions { core: Some(&core), cust: Some(&cust), cancel: Some(&flag), ..Default::default() };
+    assert!(try_index(&opts).is_ok(), "not cancelled: indexes as usual");
+    flag.store(true, Ordering::Relaxed);
+    assert_eq!(try_index(&opts).err(), Some(Cancelled));
+    // index() reports it rather than failing.
+    assert_eq!(index(&opts).notes, ["Indexing was cancelled."]);
 }

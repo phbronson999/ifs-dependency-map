@@ -11,6 +11,7 @@ use crate::upgrade;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 #[derive(Default)]
@@ -20,7 +21,13 @@ pub struct IndexOptions<'a> {
     /// The previous Core (an older checkout, or the Impact Analyzer's `Base` folder), for
     /// the upgrade comparison. Only read where a Cust customization needs it.
     pub prev_core: Option<&'a Path>,
+    /// Set from another thread to stop indexing early (`try_index` then returns `Cancelled`).
+    pub cancel: Option<&'a AtomicBool>,
 }
+
+/// Indexing was stopped through `IndexOptions::cancel`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cancelled;
 
 enum Parsed {
     Marble(ParsedMarble),
@@ -61,7 +68,15 @@ fn strip_cust(stem: &str) -> &str {
     stem.strip_suffix("-Cust").or_else(|| stem.strip_suffix("-cust")).unwrap_or(stem)
 }
 
+/// Indexes the folders. With a `cancel` flag set midway, returns an empty index with a note;
+/// use `try_index` to tell cancellation apart.
 pub fn index(opts: &IndexOptions) -> Index {
+    try_index(opts).unwrap_or_else(|Cancelled| Index { notes: vec!["Indexing was cancelled.".into()], ..Default::default() })
+}
+
+pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
+    // Checked between files and between stages: stopping takes at most one stage.
+    let check = || if opts.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) { Err(Cancelled) } else { Ok(()) };
     let start = Instant::now();
     let mut idx = Index {
         version: 1,
@@ -81,6 +96,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         let (files, notes) = scan::scan_root(root);
         idx.notes.extend(notes);
         for s in files {
+            check()?;
             let text = match std::fs::read(&s.abs) {
                 Ok(b) => String::from_utf8_lossy(&b).into_owned(),
                 Err(e) => {
@@ -124,6 +140,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
     }
 
+    check()?;
     // 2. Group files into logical units.
     let mut unit_map: HashMap<(UnitKind, String), usize> = HashMap::new();
     for fi in 0..idx.files.len() {
@@ -179,6 +196,7 @@ pub fn index(opts: &IndexOptions) -> Index {
     }
     let file_unit = |idx: &Index, fi: usize| -> Option<usize> { idx.files[fi].unit.as_deref().map(id_index) };
 
+    check()?;
     // 3. Objects.
     let mut pending_refs: Vec<(usize, marble::Ref)> = Vec::new();
     let mut method_objects: HashMap<(usize, usize), usize> = HashMap::new();
@@ -309,6 +327,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
     }
 
+    check()?;
     // 4. Unit-level edges.
     let mut edges: Vec<Edge> = Vec::new();
     let mut unresolved: Vec<Finding> = Vec::new();
@@ -432,6 +451,7 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
     }
 
+    check()?;
     // 5. Object resolution, preferring same unit, then what the unit can reach.
     let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
     for e in &edges {
@@ -931,6 +951,7 @@ pub fn index(opts: &IndexOptions) -> Index {
     }
     idx.relations = relations;
 
+    check()?;
     // 6. Components and deploy.ini connections.
     let mut comps: BTreeMap<String, Component> = BTreeMap::new();
     for (fi, f) in idx.files.iter().enumerate() {
@@ -964,6 +985,7 @@ pub fn index(opts: &IndexOptions) -> Index {
     }
     idx.components = comps.into_values().collect();
 
+    check()?;
     // 7. Findings.
     let mut findings = unresolved;
     findings.extend(analyze::run(&idx, &cols));
@@ -978,7 +1000,9 @@ pub fn index(opts: &IndexOptions) -> Index {
             _ => {}
         }
     }
+    check()?;
     findings.extend(datatypes::run(&idx, inputs));
+    check()?;
     if let Some(prev) = opts.prev_core {
         let mut notes = Vec::new();
         upgrade::run(&idx, prev, &mut findings, &mut notes);
@@ -1006,7 +1030,7 @@ pub fn index(opts: &IndexOptions) -> Index {
     idx.stats.objects = idx.objects.len();
     idx.stats.edges = idx.edges.len();
     idx.stats.millis = start.elapsed().as_millis();
-    idx
+    Ok(idx)
 }
 
 /// The entity's own view name (`DB_VIEW_NAME`) or table name (`DB_TABLE_NAME`), if it sets one.

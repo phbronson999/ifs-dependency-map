@@ -1,13 +1,15 @@
-//! Thin Tauri shell around `ifsdep-core`. The UI calls three commands:
+//! Thin Tauri shell around `ifsdep-core`. The UI calls these commands:
 //!
 //! - `pick_folder`    → native folder picker
 //! - `index_folders`  → runs the indexer, returns the graph as a JSON string
+//! - `cancel_index`   → stops the running `index_folders`, which then fails with "cancelled"
 //! - `open_in_editor` → opens a file at a line in VS Code (`code -g path:line`)
 //!
 //! The tool is read-only: nothing here writes to the indexed folders.
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
@@ -20,20 +22,34 @@ async fn pick_folder(app: tauri::AppHandle, title: Option<String>) -> Option<Str
     dialog.blocking_pick_folder().and_then(|p| p.into_path().ok()).map(|p| p.display().to_string())
 }
 
+/// Set by `cancel_index`; the indexer checks it between files and stages.
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn cancel_index() {
+    CANCEL.store(true, Ordering::Relaxed);
+}
+
 #[tauri::command]
 async fn index_folders(core: Option<String>, cust: Option<String>, prev_core: Option<String>) -> Result<String, String> {
     if core.is_none() && cust.is_none() {
         return Err("Choose a Core or Cust folder first.".into());
     }
+    CANCEL.store(false, Ordering::Relaxed);
     tauri::async_runtime::spawn_blocking(move || {
         let core = core.map(PathBuf::from);
         let cust = cust.map(PathBuf::from);
         let prev_core = prev_core.map(PathBuf::from);
-        let idx = ifsdep_core::index(&ifsdep_core::IndexOptions { core: core.as_deref(), cust: cust.as_deref(), prev_core: prev_core.as_deref() });
-        ifsdep_core::json::to_string(&idx)
+        let opts = ifsdep_core::IndexOptions {
+            core: core.as_deref(),
+            cust: cust.as_deref(),
+            prev_core: prev_core.as_deref(),
+            cancel: Some(&CANCEL),
+        };
+        ifsdep_core::try_index(&opts).map(|idx| ifsdep_core::json::to_string(&idx)).map_err(|_| "cancelled".to_string())
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -52,7 +68,7 @@ fn open_in_editor(path: String, line: usize) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![pick_folder, index_folders, open_in_editor])
+        .invoke_handler(tauri::generate_handler![pick_folder, index_folders, cancel_index, open_in_editor])
         .run(tauri::generate_context!())
         .expect("error while running IFS Dependency Map");
 }

@@ -147,10 +147,13 @@ function setIndex(idx: GraphIndex) {
   ui.focus.clear();
   ui.objUnits.clear();
   ui.selected = null;
-  $("stats").textContent =
-    `${idx.stats.files.toLocaleString()} files · ${idx.stats.units.toLocaleString()} units · ${idx.stats.edges.toLocaleString()} links · indexed in ${idx.stats.millis} ms`;
+  $("stats").textContent = statsText(idx);
   renderRoots();
   renderAll(true);
+}
+
+function statsText(idx: GraphIndex) {
+  return `${idx.stats.files.toLocaleString()} files · ${idx.stats.units.toLocaleString()} units · ${idx.stats.edges.toLocaleString()} links · indexed in ${idx.stats.millis} ms`;
 }
 
 async function reindex() {
@@ -162,8 +165,9 @@ async function reindex() {
     const json: string = await invoke("index_folders", { core: ui.roots.core, cust: ui.roots.cust, prevCore: ui.roots.prev });
     setIndex(JSON.parse(json));
   } catch (e) {
-    $("stats").textContent = "";
-    toast(`Indexing failed: ${e}`);
+    // Cancelled: keep what was loaded before, if anything.
+    $("stats").textContent = ui.model ? statsText(ui.model.idx) : "";
+    toast(String(e) === "cancelled" ? "Indexing cancelled" : `Indexing failed: ${e}`);
   } finally {
     ui.busy = false;
     renderRoots();
@@ -197,7 +201,9 @@ function renderRoots() {
       `<span class="root-chip"><span class="tag ${which}">${tag}</span><span class="path" title="${esc(ui.roots[which] ?? "")}">${esc(ui.roots[which] ?? empty)}</span><button class="btn small" data-root="${which}">Choose</button>${
         which === "prev" && ui.roots.prev ? `<button class="btn small" data-clear-root="prev" title="Stop comparing with a previous Core" aria-label="Clear the previous Core">×</button>` : ""
       }</span>`;
-    el.innerHTML = `${chip("core", "core", "not set")}${chip("cust", "cust", "not set")}${chip("prev", "previous core", "optional, for upgrades")}<button class="btn small primary" id="reindex" ${ui.busy || !(ui.roots.core || ui.roots.cust) ? "disabled" : ""}>${ui.busy ? "Indexing…" : "Index"}</button>`;
+    el.innerHTML = `${chip("core", "core", "not set")}${chip("cust", "cust", "not set")}${chip("prev", "previous core", "optional, for upgrades")}${ui.busy
+      ? `<button class="btn small" id="cancel-index" title="Stop indexing; what was loaded before stays">Cancel</button>`
+      : `<button class="btn small primary" id="reindex" ${!(ui.roots.core || ui.roots.cust) ? "disabled" : ""}>Index</button>`}`;
   } else {
     const idx = ui.model?.idx;
     const label = idx ? (document.getElementById("demo-data") && !ui.loadedFile ? "Sample Core + Cust test files" : ui.loadedFile) : "No data loaded";
@@ -1137,6 +1143,7 @@ function bindEvents() {
       return;
     }
     if (t.closest("#reindex")) { reindex(); return; }
+    if (t.closest("#cancel-index")) { invoke?.("cancel_index"); return; }
     const fi = t.closest<HTMLElement>("[data-f]");
     if (fi && !t.closest("[data-action]")) { selectFinding(fi.dataset.f!); return; }
     const sev = t.closest<HTMLElement>("[data-sev]");

@@ -25,5 +25,5 @@ pub mod scan;
 pub mod sqlscope;
 pub mod upgrade;
 
-pub use build::{index, IndexOptions};
+pub use build::{index, try_index, Cancelled, IndexOptions};
 pub use model::*;

@@ -37,7 +37,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let idx = index(&IndexOptions { core: core.as_deref(), cust: cust.as_deref(), prev_core: prev_core.as_deref() });
+    let idx = index(&IndexOptions { core: core.as_deref(), cust: cust.as_deref(), prev_core: prev_core.as_deref(), ..Default::default() });
     println!(
         "{} files, {} units, {} objects, {} edges in {} ms",
         idx.stats.files, idx.stats.units, idx.stats.objects, idx.stats.edges, idx.stats.millis
