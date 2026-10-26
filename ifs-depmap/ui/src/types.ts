@@ -46,6 +46,8 @@ interface Obj {
   base_origin: Layer | null;
   /** No base in any file; it is generated from the model. */
   base_generated: boolean;
+  /** Generated from the LU's .entity (Get(), Get_<Attr>()): in no source file; file/line point at the entity. */
+  generated: boolean;
 }
 
 /** A table or view named in `from = "…"` or SQL, or defined in .views / .storage / .cre / .entity. */

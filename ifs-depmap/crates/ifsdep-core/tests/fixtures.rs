@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 44);
+    assert_eq!(idx.stats.files, 46);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -270,7 +270,7 @@ fn unresolved_include() {
 #[test]
 fn total_findings_are_exactly_the_planted_ones() {
     let idx = fixtures();
-    assert_eq!(idx.findings.len(), 16);
+    assert_eq!(idx.findings.len(), 17);
 }
 
 #[test]
@@ -538,4 +538,58 @@ fn upgrade_comparison_says_what_changed_under_each_customization() {
     // Without a previous Core nothing is marked as caused by the upgrade.
     let plain = fixtures();
     assert!(plain.findings.iter().all(|f| f.rule != "BASE_CHANGED" && f.rule != "ENTITY_CHANGED" && !f.upgrade));
+}
+
+#[test]
+fn datatype_mismatch_follows_the_value_to_its_origin() {
+    let idx = fixtures();
+    let text = |s: &Step| format!("{}:{} {}", idx.files[s.file].rel_path.rsplit('/').next().unwrap(), s.line, s.note.as_deref().unwrap_or(""));
+    let found = findings(&idx, "DATATYPE_MISMATCH");
+    // Only PrimaryVendor: DefaultVendor calls the generated one-parameter Get_Vendor_No (TEXT),
+    // not the hand-written two-parameter overload (NUMBER); need_date + 7 is a date.
+    assert_eq!(found.iter().map(|f| f.title.as_str()).collect::<Vec<_>>(), ["ShopOrder.PrimaryVendor is NUMBER but its value is text"]);
+    let f = found[0];
+    assert_eq!(f.severity, Severity::Error);
+    assert!(f.involves_cust);
+    let trails: Vec<Vec<String>> = f.evidence.iter().map(|t| t.steps.iter().map(text).collect()).collect();
+    assert_eq!(trails[0], ["ShopOrder-Cust.entity:18 attribute PrimaryVendor of ShopOrder"]);
+    // The value: implementation → function → the variable it returns → its %TYPE → the attribute.
+    assert_eq!(
+        trails[1],
+        [
+            "ShopOrder-Cust.entity:18 DB_SQL_IMPLEMENTATION Supplier_Part_API.Get_Primary_Vendor_No(part_no)",
+            "SupplierPart.plsql:11 Supplier_Part_API.Get_Primary_Vendor_No returns VARCHAR2",
+            "SupplierPart.plsql:14 returns cache_vendor_no_",
+            "SupplierPart.plsql:7 cache_vendor_no_ is declared SUPPLIER_PART_TAB.vendor_no%TYPE",
+            "SupplierPart.entity:14 attribute VendorNo of SupplierPart: TEXT(20)",
+        ]
+    );
+    // It's public, so the generated Shop_Order_API.Get() fills it; a view reaches that Get().
+    assert!(f.message.contains("every Shop_Order_API.Get() fills it: 1 place call"), "{}", f.message);
+    assert_eq!(
+        trails[2],
+        [
+            "ShopOrder.views:24 view SHOP_ORDER_COST calls Shop_Order_API.Get_Cost",
+            "ShopOrder.plsql:75 Shop_Order_API.Get_Cost calls Shop_Order_API.Get",
+        ]
+    );
+    assert_eq!(
+        f.suggestion.as_ref().unwrap().snippet.as_deref(),
+        Some("- <DATATYPE>NUMBER</DATATYPE>\n+ <DATATYPE>TEXT</DATATYPE>\n+ <LENGTH>20</LENGTH>")
+    );
+
+    // Traced back to the .entity: Get() is generated from ShopOrder.entity, and calls on to what
+    // the Cust attribute's implementation calls.
+    let get = idx.objects.iter().find(|o| o.generated && o.name == "Get" && idx.units[id_index(&o.unit)].name == "Shop_Order_API").unwrap();
+    assert_eq!(idx.files[get.file].rel_path.rsplit('/').next(), Some("ShopOrder.entity"));
+    let to: Vec<(String, Option<String>)> = idx
+        .edges
+        .iter()
+        .filter(|e| e.from == get.id && e.kind == EdgeKind::Invokes)
+        .map(|e| (idx.objects[id_index(&e.to)].name.clone(), e.detail.clone()))
+        .collect();
+    assert_eq!(to, [("Get_Primary_Vendor_No".to_string(), Some("PrimaryVendor".to_string()))]);
+    // Both Get_Vendor_No exist: the hand-written overload and the generated getter.
+    let vendor: Vec<bool> = idx.objects.iter().filter(|o| o.name == "Get_Vendor_No").map(|o| o.generated).collect();
+    assert_eq!(vendor, [false, true]);
 }

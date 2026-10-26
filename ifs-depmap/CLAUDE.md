@@ -26,7 +26,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - `src-tauri/` Tauri 2 shell: `pick_folder`, `index_folders`, `open_in_editor` (`code -g`)
 
 ## Commands
-- `cargo test` (39 tests, must stay green)
+- `cargo test` (41 tests, must stay green)
 - `cargo run --release --bin ifsdep -- --core <dir> --cust <dir> --json out.json [--strict]`
 - `npm install`, then `npm run tauri dev` / `npm run demo` (builds ui/dist/demo.html)
 
@@ -58,6 +58,13 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - IFS names split at every capital (`JobKPI` → `Job_K_P_I_API`, `JOB_K_P_I_TAB`); checked on
   every Core entity with an acronym (2026-10-25). A generated table is `snake(LU)_TAB` even
   when `DB_VIEW_NAME` renames the view.
+- Generated methods (checked 2026-10-26 on 25R1 Core calls): from each `.entity`, IFS generates
+  `Get()` (Public_Rec: one field per `IS_PUBLIC` attribute without `EXCLUDE_GET_METHOD`),
+  `Get_<Attr>()` and `Get_<Attr>_Db()` (enumerations). A getter coexists with a hand-written method
+  of the same name as an overload (it takes the LU's keys), e.g. `Customer_Order_API.Get_Customer_Po_No`.
+- A derived attribute gets its value from `DB_SQL_IMPLEMENTATION`, an association `USE_DEFINITION`
+  (`COLUMN_NAME`, exposed as `COLUMN_ALIAS`), or the LU's hand-written view in `.views` (the user,
+  2026-10-26). Hand-written views name their columns by alias.
 - Unverified: whether an `abstract` LU gets a generated table. The rule says no; three
   abstract LUs (CustOrdRentalIvcItem, RmAccUsage, RmAccFilterType) have tables that code reads
   and only a .upg creates.

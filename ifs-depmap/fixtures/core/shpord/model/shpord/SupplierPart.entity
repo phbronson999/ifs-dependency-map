@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ENTITY xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:ifsworld-com:schemas:entity_entity">
+   <NAME>SupplierPart</NAME>
+   <COMPONENT>SHPORD</COMPONENT>
+   <ATTRIBUTES>
+      <ATTRIBUTE>
+         <NAME>PartNo</NAME>
+         <IS_PRIMARY_KEY>1</IS_PRIMARY_KEY>
+         <IS_PUBLIC>1</IS_PUBLIC>
+         <DATATYPE>TEXT</DATATYPE>
+         <LENGTH>25</LENGTH>
+      </ATTRIBUTE>
+      <ATTRIBUTE>
+         <NAME>VendorNo</NAME>
+         <IS_PUBLIC>1</IS_PUBLIC>
+         <DATATYPE>TEXT</DATATYPE>
+         <LENGTH>20</LENGTH>
+      </ATTRIBUTE>
+   </ATTRIBUTES>
+</ENTITY>

@@ -378,7 +378,9 @@ fn dup_key(o: &Object) -> String {
 
 fn duplicates(idx: &Index, src: &mut Source, out: &mut Vec<Finding>) {
     let mut by_unit: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (oi, o) in idx.objects.iter().enumerate() {
+    // Generated methods aren't declarations anyone wrote: a generated getter next to a
+    // hand-written method of the same name is an overload, not a redeclaration.
+    for (oi, o) in idx.objects.iter().enumerate().filter(|(_, o)| !o.generated) {
         by_unit.entry(o.unit.as_str()).or_default().push(oi);
     }
 

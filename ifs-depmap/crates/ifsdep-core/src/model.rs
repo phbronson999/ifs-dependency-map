@@ -122,6 +122,10 @@ pub struct Object {
     /// No base in any file, but it is generated from the model (IFS's "Base" layer):
     /// any Core override, or a Cust override of a template method like `Insert___`.
     pub base_generated: bool,
+    /// Generated from the LU's `.entity` into its `Xxx_API` package (`Get()`, `Get_<Attr>()`,
+    /// `Get_<Attr>_Db()`): in no source file. `file` / `line` point at the entity, or at the
+    /// attribute for a per-attribute getter.
+    pub generated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

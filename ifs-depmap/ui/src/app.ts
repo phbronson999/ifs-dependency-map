@@ -885,10 +885,12 @@ function objectHtml(m: Model, id: string) {
     return `<button data-action="goto" data-node="${other}"><span class="k">${dir} ${esc(EDGE_LABEL[e.kind])}</span>${where}</button>`;
   });
   return `<div class="d">
-<div class="eyebrow"><span>${esc(o.kind)}</span>${o.modifier ? `<span class="pill cust">@${esc(o.modifier)}</span>` : ""}${o.section ? `<span>${esc(o.section)} section</span>` : ""}</div>
+<div class="eyebrow"><span>${esc(o.kind)}</span>${o.generated ? `<span class="pill prev">generated</span>` : ""}${o.modifier ? `<span class="pill cust">@${esc(o.modifier)}</span>` : ""}${o.section ? `<span>${esc(o.section)} section</span>` : ""}</div>
 <h3>${esc(o.name)}</h3>
 <dl class="kv"><dt>in</dt><dd>${nodeLink(o.unit)}</dd>${o.target ? `<dt>for</dt><dd class="mono">${esc(o.target)}</dd>` : ""}${o.dynamic ? `<dt>optional</dt><dd class="mono">@DynamicComponentDependency ${esc(o.dynamic)}</dd>` : ""}</dl>
-<section><h4>Declared at</h4>${fileLine(o.file, o.line)}</section>
+${o.generated
+  ? `<section><h4>Generated from</h4><p>IFS generates this from the LU's model, so it isn't in any source file. ${o.name === "Get" ? "It returns the whole public record: every public attribute, derived ones included." : "It returns this attribute."}</p>${fileLine(o.file, o.line)}</section>`
+  : `<section><h4>Declared at</h4>${fileLine(o.file, o.line)}</section>`}
 ${o.modifier ? `<section><h4>Overrides</h4>${base ? `<p>Base comes from <b>${m.file(base.file).root === "Cust" ? "a pure Cust file" : "Core"}</b> (${esc(m.unit(base.unit).name)}).</p>${fileLine(base.file, base.line)}` : o.base_generated ? `<p>Base is generated from the model, so it isn't in any file.</p>` : `<p>No base found in the indexed files.</p>`}</section>` : ""}
 ${rows.length ? `<section><h4>Links</h4><div class="linklist">${rows.join("")}</div></section>` : ""}
 ${findingLinks(m.findingsByNode.get(id) ?? [])}

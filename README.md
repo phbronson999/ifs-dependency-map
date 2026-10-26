@@ -42,6 +42,7 @@ No Rust or Node is needed. The `.msi` there does the same for managed installs.
 | `OVERRIDE_NO_BASE` | warning / info | `@Override`/`@Overtake` with nothing to layer over (info for projection entities, whose base may be an LU `.entity`). |
 | `UNRESOLVED_INCLUDE` / `UNRESOLVED_PROJECTION` | warning | Name not found in either folder. |
 | `COLUMN_AMBIGUOUS` | error | A Cust attribute (or Cust `@Override VIEW` column) gives a view or table a column that a query uses without an alias prefix, while another relation in the same FROM already has it: the query no longer compiles (ORA-00918). Only SQL in `.plsql`, `.plsvc` and `.views` files is checked. |
+| `DATATYPE_MISMATCH` | error / warning | A derived attribute's declared `DATATYPE` / `LENGTH` doesn't match where its value comes from, followed through `DB_SQL_IMPLEMENTATION`, an association's `USE_DEFINITION` or the LU's hand-written view, then function `RETURN` types, `%TYPE`s, table columns and entity attributes. Error when the type differs (a number column filled with text fails with ORA-06502), warning when the declared length is shorter. A public attribute is a field of the generated `Get()`'s record, so the finding counts every caller of `Get()` and shows a path to it from a view. |
 | `BASE_CHANGED` | error / warning / info | With a previous Core: the Core declaration an `@Override` / `@Overtake` (or Cust `@Override VIEW`) layers over changed. Shows the diff of just that declaration. Error when its signature changed and yours still has the old one; warning under an `@Overtake` (your copy replaces IFS's new code); info otherwise. |
 | `ENTITY_CHANGED` | warning / info | With a previous Core: the Core `.entity` under a `-Cust.entity` gained, lost or changed attributes; a warning when Core now has an attribute your Cust entity also declares. |
 
@@ -77,6 +78,7 @@ The Objects view follows these links downward as far as they go:
 | action/function → .plsvc method | IFS naming: `ReleaseOrder` → `Release_Order___` |
 | method → method | `Xxx_API.Method(...)`, same-package `Method___(...)`, and `fetch = "Xxx_API.M(...)"` |
 | override → base | `@Override` / `@Overtake` |
+| call → generated method | `Xxx_API.Get()`, `Get_<Attr>()` and `Get_<Attr>_Db()` are generated from the LU's `.entity` (public attributes, unless `EXCLUDE_GET_METHOD`); they point at the entity and call what their derived attributes' implementations call. A getter and a hand-written method of the same name are overloads |
 | entity/query/method → table or view | `from = "view"`, `FROM` / `JOIN` / `UPDATE` / `INSERT INTO` in SQL (including `FROM a x, b y` lists; `WITH` names are left out) |
 | view → table or view, method | the view's `SELECT` in a `.views` file |
 | generated view → generated table | the `.entity`: the LU name in snake case (every capital starts a word: `JobKPI` → `JOB_K_P_I`), plus `_TAB`, unless `DB_VIEW_NAME` / `DB_TABLE_NAME` rename them (none for `abstract` LUs) |
@@ -150,7 +152,7 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 39 tests
+cargo test                                         # 41 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli

@@ -12,6 +12,7 @@
 
 pub mod analyze;
 pub mod build;
+pub mod datatypes;
 pub mod db;
 pub mod deployini;
 pub mod entity;

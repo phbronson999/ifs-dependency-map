@@ -18,3 +18,8 @@ SELECT s.order_no                                                 order_no,
        Shop_Order_API.Get_Part_Description(s.contract, l.part_no) part_description
 FROM   shop_ord s, shop_order_line l
 WHERE  s.order_no = l.order_no;
+
+VIEW Shop_Order_Cost IS
+SELECT order_no                         order_no,
+       Shop_Order_API.Get_Cost(order_no) cost
+FROM   shop_order_tab;

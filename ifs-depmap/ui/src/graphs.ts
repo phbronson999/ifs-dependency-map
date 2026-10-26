@@ -393,7 +393,7 @@ function objectsGraph(m: Model, units: Set<string>, edgeKinds: Set<string>, keep
     return {
       id,
       label: o.name,
-      sub: `${u.name}${o.modifier ? ` · @${o.modifier}` : ""}`,
+      sub: `${u.name}${o.modifier ? ` · @${o.modifier}` : ""}${o.generated ? ` · generated from ${f.rel_path.split("/").pop()}` : ""}`,
       glyph: o.kind.toUpperCase().slice(0, 9),
       origin: f.root,
       overlay: false,

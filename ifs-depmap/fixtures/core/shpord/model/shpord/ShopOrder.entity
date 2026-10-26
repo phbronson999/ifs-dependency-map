@@ -20,5 +20,15 @@
          <IS_PRIMARY_KEY>1</IS_PRIMARY_KEY>
          <DATATYPE>TEXT</DATATYPE>
       </ATTRIBUTE>
+      <ATTRIBUTE>
+         <NAME>NeedDate</NAME>
+         <IS_PUBLIC>1</IS_PUBLIC>
+         <DATATYPE>DATE</DATATYPE>
+      </ATTRIBUTE>
+      <ATTRIBUTE>
+         <NAME>PartNo</NAME>
+         <DATATYPE>TEXT</DATATYPE>
+         <LENGTH>25</LENGTH>
+      </ATTRIBUTE>
    </ATTRIBUTES>
 </ENTITY>

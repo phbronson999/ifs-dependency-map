@@ -1,4 +1,5 @@
 use crate::analyze;
+use crate::datatypes;
 use crate::db;
 use crate::deployini::{self, DeployIni};
 use crate::entity;
@@ -202,6 +203,7 @@ pub fn index(opts: &IndexOptions) -> Index {
                         base: None,
                         base_origin: None,
                         base_generated: false,
+                        generated: false,
                     });
                     for r in &d.refs {
                         pending_refs.push((oi, r.clone()));
@@ -226,10 +228,84 @@ pub fn index(opts: &IndexOptions) -> Index {
                         base: None,
                         base_origin: None,
                         base_generated: false,
+                        generated: false,
                     });
                 }
             }
             Parsed::Deploy(_) | Parsed::Db(_) | Parsed::Entity(_) => {}
+        }
+    }
+
+    // Generated methods: from each LU's .entity, IFS generates into its Xxx_API package
+    // `Get()` (the whole Public_Rec), `Get_<Attr>()` per public attribute and `Get_<Attr>_Db()`
+    // per public enumeration, except for attributes with EXCLUDE_GET_METHOD. They are in no
+    // source file, so they become objects pointing at the entity; a name the package declares
+    // itself is the hand-written method instead. Derived attributes they return are linked to
+    // what their DB_SQL_IMPLEMENTATION calls further down.
+    let mut generated_reads: Vec<(usize, usize, usize)> = Vec::new(); // (object, entity file, attribute)
+    {
+        let mut by_lu: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for fi in 0..idx.files.len() {
+            if let Parsed::Entity(entity::ParsedEntity { name: Some((lu, _)), .. }) = &parsed[fi] {
+                by_lu.entry(lu.to_ascii_uppercase()).or_default().push(fi);
+            }
+        }
+        for files in by_lu.values_mut() {
+            // Core first: its attributes come before the Cust ones.
+            files.sort_by_key(|&f| idx.files[f].root != Layer::Core);
+            let Parsed::Entity(base) = &parsed[files[0]] else { continue };
+            let (lu, lu_line) = base.name.clone().expect("grouped by name");
+            let Some(&pu) = unit_map.get(&(UnitKind::Package, plsql::package_name(&lu).to_ascii_uppercase())) else { continue };
+            let unit_id = idx.units[pu].id.clone();
+            let declared: HashSet<String> =
+                idx.objects.iter().filter(|o| o.unit == unit_id).map(|o| o.name.to_ascii_uppercase()).collect();
+            let mut made: HashSet<String> = HashSet::new();
+            // A per-attribute getter exists next to a hand-written method of the same name: they
+            // are overloads (the getter takes the LU's keys), e.g. Customer_Order_API's
+            // Get_Customer_Po_No(order_no_) and Get_Customer_Po_No(customer_po_no_, customer_no_, ...).
+            // Get() itself is replaced by a hand-written one.
+            let mut add = |idx: &mut Index, name: String, file: usize, line: usize, overload: bool| -> Option<usize> {
+                let upper = name.to_ascii_uppercase();
+                if (!overload && declared.contains(&upper)) || !made.insert(upper) {
+                    return None;
+                }
+                let oi = idx.objects.len();
+                idx.objects.push(Object {
+                    id: format!("o{oi}"),
+                    unit: unit_id.clone(),
+                    file,
+                    kind: "function".into(),
+                    name,
+                    line,
+                    modifier: None,
+                    section: None,
+                    target: None,
+                    dynamic: None,
+                    base: None,
+                    base_origin: None,
+                    base_generated: false,
+                    generated: true,
+                });
+                Some(oi)
+            };
+            let get = add(&mut idx, "Get".into(), files[0], lu_line, false);
+            for &f in files.iter() {
+                let Parsed::Entity(e) = &parsed[f] else { continue };
+                for (ai, a) in e.attributes.iter().enumerate() {
+                    if a.name.is_empty() || !a.public || a.exclude_get {
+                        continue;
+                    }
+                    let getter = add(&mut idx, format!("Get_{}", plsql::snake_name(&a.name)), f, a.line, true);
+                    if a.enumeration {
+                        add(&mut idx, format!("Get_{}_Db", plsql::snake_name(&a.name)), f, a.line, true);
+                    }
+                    if a.implementation.is_some() {
+                        for o in [get, getter].into_iter().flatten() {
+                            generated_reads.push((o, f, ai));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -550,6 +626,21 @@ pub fn index(opts: &IndexOptions) -> Index {
         }
         method_in(u, m)
     };
+
+    // A generated Get() / Get_<Attr>() evaluates each derived attribute it returns: it calls
+    // what the attribute's DB_SQL_IMPLEMENTATION calls (`detail` names the attribute).
+    for &(oi, f, ai) in &generated_reads {
+        let Parsed::Entity(e) = &parsed[f] else { continue };
+        let a = &e.attributes[ai];
+        let layer = idx.files[f].root;
+        let code = a.implementation.as_deref().unwrap_or("").replace(['\n', '\r'], " ");
+        for (pkg, method) in plsql::calls_in(&code) {
+            let Some(t) = package_method(&format!("{pkg}.{method}"), layer) else { continue };
+            let mut ed = edge(idx.objects[oi].id.clone(), idx.objects[t].id.clone(), EdgeKind::Invokes, f, a.line, layer);
+            ed.detail = Some(a.name.clone());
+            push_edge(&mut edges, ed);
+        }
+    }
 
     // References, arrays, enumerations, fetch calls, `from =` and `call X()`.
     for (oi, r) in &pending_refs {
@@ -876,6 +967,18 @@ pub fn index(opts: &IndexOptions) -> Index {
     // 7. Findings.
     let mut findings = unresolved;
     findings.extend(analyze::run(&idx, &cols));
+    let mut inputs = datatypes::Inputs { entities: Vec::new(), views: Vec::new(), tables: Vec::new() };
+    for (fi, p) in parsed.iter().enumerate() {
+        match p {
+            Parsed::Entity(e) => inputs.entities.push((fi, e)),
+            Parsed::Db(d) => {
+                inputs.views.extend(d.views.iter().map(|v| (fi, v)));
+                inputs.tables.extend(d.tables.iter().map(|t| (fi, t)));
+            }
+            _ => {}
+        }
+    }
+    findings.extend(datatypes::run(&idx, inputs));
     if let Some(prev) = opts.prev_core {
         let mut notes = Vec::new();
         upgrade::run(&idx, prev, &mut findings, &mut notes);

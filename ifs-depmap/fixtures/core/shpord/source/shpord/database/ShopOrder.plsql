@@ -65,3 +65,13 @@ IS
 BEGIN
    RETURN Inventory_Part_API.Get_Description(contract_, part_no_);
 END Get_Part_Description;
+
+-- Reads the whole public record, so it evaluates every public derived attribute.
+FUNCTION Get_Cost (
+   order_no_ IN VARCHAR2 ) RETURN NUMBER
+IS
+   rec_ Shop_Order_API.Public_Rec;
+BEGIN
+   rec_ := Shop_Order_API.Get(order_no_);
+   RETURN 0;
+END Get_Cost;

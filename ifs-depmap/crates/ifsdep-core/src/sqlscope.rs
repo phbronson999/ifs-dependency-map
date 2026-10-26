@@ -281,6 +281,84 @@ pub fn blocks(cleaned: &str) -> Vec<Block> {
     out
 }
 
+/// One item of a query's select list: the column it produces and the expression behind it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectItem {
+    /// Upper-cased: the alias, or the column a bare `col` / `a.col` names. None for an
+    /// unnamed expression or `*`.
+    pub name: Option<String>,
+    /// The expression without the alias, as written (literals blanked by `prepare`).
+    pub expr: String,
+    /// 1-based line where the item starts.
+    pub line: usize,
+}
+
+/// The select list of the first SELECT in `prepared` (text from `prepare`), item by item.
+pub fn select_items(prepared: &str) -> Vec<SelectItem> {
+    let b = prepared.as_bytes();
+    let line_at = |pos: usize| prepared[..pos].matches('\n').count() + 1;
+    let word_at = |pos: usize, w: &str| {
+        prepared.get(pos..pos + w.len()).is_some_and(|s| s.eq_ignore_ascii_case(w))
+            && (pos == 0 || !is_name_char(prepared[..pos].chars().next_back().unwrap()))
+            && prepared[pos + w.len()..].chars().next().is_none_or(|c| !is_name_char(c))
+    };
+    let Some(start) = (0..b.len()).find(|&i| word_at(i, "SELECT")) else { return Vec::new() };
+    let mut items = Vec::new();
+    let (mut depth, mut item_start, mut in_str) = (0i32, start + 6, false);
+    let mut i = start + 6;
+    let mut push = |from: usize, to: usize| {
+        let text = prepared[from..to].trim();
+        if !text.is_empty() {
+            let lead = from + prepared[from..to].find(|c: char| !c.is_whitespace()).unwrap_or(0);
+            items.push((text.to_string(), line_at(lead)));
+        }
+    };
+    while i < b.len() {
+        let c = b[i];
+        if c == b'\'' {
+            in_str = !in_str;
+        } else if !in_str {
+            match c {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b',' if depth == 0 => {
+                    push(item_start, i);
+                    item_start = i + 1;
+                }
+                _ if depth == 0 && word_at(i, "FROM") => {
+                    push(item_start, i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    items
+        .into_iter()
+        .map(|(text, line)| {
+            let text = text.strip_prefix("DISTINCT ").or_else(|| text.strip_prefix("distinct ")).unwrap_or(&text).trim().to_string();
+            let toks = tokens(&text);
+            let (name, expr) = match toks.as_slice() {
+                [.., (Tok::Punct('*'), _)] => (None, text.clone()),
+                [(Tok::Name(c), _)] => (Some(c.to_ascii_uppercase()), text.clone()),
+                [(Tok::Name(_), _), (Tok::Punct('.'), _), (Tok::Name(c), _)] => (Some(c.to_ascii_uppercase()), text.clone()),
+                [.., p, (Tok::Name(a), _)] if !matches!(p.0, Tok::Punct('.')) && !KEYWORDS.contains(&a.to_ascii_uppercase().as_str()) => {
+                    // `expr alias` or `expr AS alias`: the expression is everything before the alias.
+                    let cut = text.rfind(a).unwrap_or(text.len());
+                    let mut e = text[..cut].trim_end();
+                    if e.len() >= 3 && e[e.len() - 3..].eq_ignore_ascii_case(" AS") {
+                        e = e[..e.len() - 3].trim_end();
+                    }
+                    (Some(a.to_ascii_uppercase()), e.to_string())
+                }
+                _ => (None, text.clone()),
+            };
+            SelectItem { name, expr, line }
+        })
+        .collect()
+}
+
 /// The column names a view's query produces: each select-list item's alias, or the column
 /// it names. None when the list has `*` or an unnamed expression.
 pub fn select_columns(cleaned: &str) -> Option<Vec<String>> {
@@ -344,6 +422,23 @@ mod tests {
         assert_eq!(refs(&b[2]), ["STATE"]);
         assert!(b[3].from.is_empty(), "dual is not a relation with columns");
         assert_eq!(refs(&b[3]), ["X"]);
+    }
+
+    #[test]
+    fn select_items_with_their_expressions() {
+        let src = "VIEW v IS\n   Prompt = 'x'\nSELECT a.order_no,\n       contract,\n       NVL(b.qty, 0) qty,\n       Supplier_API.Get_Name(a.vendor_no, 'y') AS vendor_name,\n       a.qty * 2 double_qty\nFROM a_tab a, b_tab b;";
+        let items = select_items(&prepare(src));
+        let got: Vec<(Option<&str>, &str, usize)> = items.iter().map(|i| (i.name.as_deref(), i.expr.as_str(), i.line)).collect();
+        assert_eq!(
+            got,
+            [
+                (Some("ORDER_NO"), "a.order_no", 3),
+                (Some("CONTRACT"), "contract", 4),
+                (Some("QTY"), "NVL(b.qty, 0)", 5),
+                (Some("VENDOR_NAME"), "Supplier_API.Get_Name(a.vendor_no, ' ')", 6),
+                (Some("DOUBLE_QTY"), "a.qty * 2", 7),
+            ]
+        );
     }
 
     #[test]
