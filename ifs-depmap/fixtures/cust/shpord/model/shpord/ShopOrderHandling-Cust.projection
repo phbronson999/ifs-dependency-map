@@ -21,3 +21,18 @@ function GetDefaultSite Text;
 entity ShopOrderOperation {
    attribute TiNote Text;
 }
+
+-- Over ShopOrder: declares PrimaryVendor again, so it changes with it.
+entity TiShopOrderVendor using ShopOrder {
+   attribute PrimaryVendor Number {
+      fetch = "primary_vendor";
+   }
+}
+
+-- Not over ShopOrder: the same attribute name is its own. Fetching the getter ties it, though.
+entity TiVendorNote {
+   attribute PrimaryVendor Number;
+   attribute VendorOfOrder Number {
+      fetch = "Shop_Order_API.Get_Primary_Vendor(order_no)";
+   }
+}

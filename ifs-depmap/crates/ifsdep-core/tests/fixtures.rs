@@ -565,7 +565,7 @@ fn datatype_mismatch_follows_the_value_to_its_origin() {
         ]
     );
     // It's public, so the generated Shop_Order_API.Get() fills it; a view reaches that Get().
-    assert!(f.message.contains("every Shop_Order_API.Get() fills it: 1 place call"), "{}", f.message);
+    assert!(f.message.contains("every Shop_Order_API.Get() fills it: 2 places call"), "{}", f.message);
     assert_eq!(
         trails[2],
         [
@@ -577,6 +577,26 @@ fn datatype_mismatch_follows_the_value_to_its_origin() {
         f.suggestion.as_ref().unwrap().snippet.as_deref(),
         Some("- <DATATYPE>NUMBER</DATATYPE>\n+ <DATATYPE>TEXT</DATATYPE>\n+ <LENGTH>20</LENGTH>")
     );
+    // Everything else to change with it. Projection attributes over ShopOrder, or fetching its
+    // getter, must change; code that reads the value is listed to check. Not listed: the
+    // TiVendorNote attribute of the same name (not over ShopOrder), another record's
+    // primary_vendor, a view reading primary_vendor from another table.
+    assert_eq!(f.evidence[3].title, "Also change (2): declared with the old type, should be Text (maxlength 20)");
+    assert_eq!(
+        trails[3],
+        [
+            "ShopOrderHandling-Cust.projection:27 declared Number, but its value is text",
+            "ShopOrderHandling-Cust.projection:35 VendorOfOrder fetches Shop_Order_API.Get_Primary_Vendor: declared Number, but its value is text",
+        ]
+    );
+    assert_eq!(
+        trails[4],
+        [
+            "ShopOrder-Cust.plsql:67 reads primary_vendor from the record Shop_Order_API.Get() returns",
+            "ShopOrder-Cust.views:13 selects primary_vendor from view SHOP_ORD",
+        ]
+    );
+    assert!(f.message.ends_with("2 other declarations must change and 2 places use the value; all are listed below."), "{}", f.message);
 
     // Traced back to the .entity: Get() is generated from ShopOrder.entity, and calls on to what
     // the Cust attribute's implementation calls.

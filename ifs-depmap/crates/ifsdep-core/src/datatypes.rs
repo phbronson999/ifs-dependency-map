@@ -16,7 +16,7 @@ use crate::db;
 use crate::entity::{Attribute, ParsedEntity};
 use crate::model::*;
 use crate::plsql;
-use crate::sqlscope::FromItem;
+use crate::sqlscope::{self, FromItem};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -624,6 +624,7 @@ pub fn run(idx: &Index, inputs: Inputs) -> Vec<Finding> {
         }
     }
 
+    let mut targets: Vec<Target> = Vec::new();
     let mut lus: Vec<&String> = r.lus.keys().collect();
     lus.sort();
     for key in lus {
@@ -643,10 +644,280 @@ pub fn run(idx: &Index, inputs: Inputs) -> Vec<Finding> {
                     continue;
                 }
                 out.push(finding(idx, &r, &callers, f, a, &lu, declared, &origin, length_short));
+                targets.push(Target { finding: out.len() - 1, lu: lu.clone(), attr: a, origin: origin.kind, origin_length: origin.length, length_short });
             }
         }
     }
+    places(idx, &r, &callers, &targets, &mut out);
     out
+}
+
+/// A mismatched attribute whose other places are looked for.
+struct Target<'a> {
+    finding: usize,
+    lu: String,
+    attr: &'a Attribute,
+    origin: Kind,
+    origin_length: Option<u32>,
+    length_short: bool,
+}
+
+/// A projection attribute type as a kind (`Text`, `Number`, `Enumeration(X)`...).
+fn proj_kind(t: &str) -> Option<Kind> {
+    let word: String = t.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    match word.as_str() {
+        "Text" | "Lookup" | "Enumeration" => Some(Kind::Text),
+        "Number" | "Integer" => Some(Kind::Number),
+        "Date" | "Timestamp" => Some(Kind::Date),
+        _ => None,
+    }
+}
+
+/// `{` minus `}` on a line, outside double-quoted strings.
+fn brace_delta(s: &str) -> i32 {
+    let (mut d, mut in_str) = (0, false);
+    for c in s.chars() {
+        match c {
+            '"' => in_str = !in_str,
+            '{' if !in_str => d += 1,
+            '}' if !in_str => d -= 1,
+            _ => {}
+        }
+    }
+    d
+}
+
+/// Whether `word` occurs in `line` as a whole name, ignoring case.
+fn has_word(line: &str, word: &str) -> bool {
+    let (l, w) = (line.to_ascii_lowercase(), word.to_ascii_lowercase());
+    let mut from = 0;
+    while let Some(p) = l[from..].find(&w).map(|p| from + p) {
+        let before = l[..p].chars().next_back().is_none_or(|c| !is_name_char(c));
+        let after = l[p + w.len()..].chars().next().is_none_or(|c| !is_name_char(c));
+        if before && after {
+            return true;
+        }
+        from = p + w.len();
+    }
+    false
+}
+
+/// Everything else that has to change with each mismatched attribute, added to its finding:
+/// - must change: projection attributes declared over it with the wrong type (in an entity of
+///   that LU, or fetching its getter), a too short `maxlength`, other entities' USE_DEFINITION
+///   copies of it with the wrong type;
+/// - check: code that receives the value as the declared type (calls to its getter, record
+///   field reads after `Get()`, SQL selecting the column from the LU's view).
+fn places(idx: &Index, r: &Resolver, callers: &HashMap<&str, Vec<&Edge>>, targets: &[Target], out: &mut [Finding]) {
+    if targets.is_empty() {
+        return;
+    }
+    let mut must: Vec<Vec<(usize, usize, String)>> = vec![Vec::new(); targets.len()];
+    let mut check: Vec<Vec<(usize, usize, String)>> = vec![Vec::new(); targets.len()];
+    let pkg = |t: &Target| plsql::package_name(&t.lu);
+    let getter = |t: &Target| format!("Get_{}", plsql::snake_name(&t.attr.name));
+    let column = |t: &Target| plsql::snake_name(&t.attr.name).to_ascii_lowercase();
+    let wanted = |t: &Target| -> String {
+        if t.length_short || t.origin == Kind::Text {
+            format!("{}{}", if t.origin == Kind::Text { "Text" } else { "" }, t.origin_length.map_or(String::new(), |l| format!(" (maxlength {l})")))
+        } else {
+            match t.origin {
+                Kind::Number => "Number".into(),
+                Kind::Date => "Date".into(),
+                _ => t.origin.datatype().into(),
+            }
+        }
+    };
+
+    // 1. Projections, fragments and clients.
+    let names: Vec<String> = targets.iter().map(|t| t.attr.name.clone()).collect();
+    let getters: Vec<String> = targets.iter().map(|t| format!("{}.{}(", pkg(t), getter(t)).to_ascii_lowercase()).collect();
+    for (fi, file) in idx.files.iter().enumerate() {
+        if !file.kind.is_marble() {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&file.abs_path) else { continue };
+        let text = String::from_utf8_lossy(&bytes);
+        let lower = text.to_ascii_lowercase();
+        if !names.iter().any(|n| text.contains(n.as_str())) && !getters.iter().any(|g| lower.contains(g.as_str())) {
+            continue;
+        }
+        let mut depth = 0;
+        let mut ctx: Option<(String, Option<String>)> = None;
+        // The attribute block being read: (line, name, type, depth inside it).
+        let mut cur: Option<(usize, String, String, i32)> = None;
+        for (i, raw) in text.lines().enumerate() {
+            let code = crate::marble::strip_comment(raw);
+            let t = code.trim();
+            if depth == 0 {
+                let words: Vec<&str> = t.split_whitespace().filter(|w| !w.starts_with('@')).collect();
+                if let [kind, name, rest @ ..] = words.as_slice() {
+                    if matches!(*kind, "entity" | "query" | "virtual" | "summary" | "singleton" | "structure") {
+                        let using = rest.iter().position(|w| *w == "using").and_then(|p| rest.get(p + 1)).map(|u| u.trim_end_matches(['{', ';']).to_string());
+                        ctx = Some((name.trim_end_matches(['{', ';']).to_string(), using));
+                    }
+                }
+            } else if let Some(rest) = t.strip_prefix("attribute ") {
+                let mut w = rest.split_whitespace();
+                let (name, ty) = (w.next().unwrap_or(""), w.next().unwrap_or("").trim_end_matches(['{', ';']));
+                cur = Some((i + 1, name.to_string(), ty.to_string(), depth + brace_delta(t)));
+                for (ti, tg) in targets.iter().enumerate() {
+                    let over_lu = ctx.as_ref().is_some_and(|(n, u)| n.eq_ignore_ascii_case(&tg.lu) || u.as_deref().is_some_and(|u| u.eq_ignore_ascii_case(&tg.lu)));
+                    if name == tg.attr.name && over_lu {
+                        if let Some(note) = wrong_type(ty, tg) {
+                            must[ti].push((fi, i + 1, note));
+                        }
+                    }
+                }
+            } else if let Some((line, name, ty, _)) = &cur {
+                let tl = t.to_ascii_lowercase();
+                for (ti, tg) in targets.iter().enumerate() {
+                    if tl.starts_with("fetch") && tl.contains(&getters[ti]) {
+                        if let Some(note) = wrong_type(ty, tg) {
+                            must[ti].push((fi, *line, format!("{name} fetches {}.{}: {note}", pkg(tg), getter(tg))));
+                        }
+                    }
+                    if tg.origin == Kind::Text && tl.starts_with("maxlength") {
+                        let n: String = tl.chars().filter(|c| c.is_ascii_digit()).collect();
+                        let over = ctx.as_ref().is_some_and(|(c, u)| c.eq_ignore_ascii_case(&tg.lu) || u.as_deref().is_some_and(|u| u.eq_ignore_ascii_case(&tg.lu)));
+                        if *name == tg.attr.name && over && n.parse::<u32>().ok().zip(tg.origin_length).is_some_and(|(m, o)| m < o) {
+                            must[ti].push((fi, i + 1, format!("maxlength {n} is shorter than its values ({})", tg.origin_length.unwrap())));
+                        }
+                    }
+                }
+            }
+            depth += brace_delta(t);
+            if cur.as_ref().is_some_and(|c| depth < c.3 || (c.3 == depth && t.ends_with(';') && !t.contains('{'))) {
+                cur = None;
+            }
+            if depth <= 0 {
+                depth = 0;
+                ctx = None;
+                cur = None;
+            }
+        }
+    }
+
+    // 2. Code that receives the value as the declared type.
+    let gen = |t: &Target, name: &str| -> Option<&Object> {
+        let p = pkg(t);
+        idx.objects.iter().find(|o| o.generated && o.name.eq_ignore_ascii_case(name) && idx.units[id_index(&o.unit)].name.eq_ignore_ascii_case(&p))
+    };
+    for (ti, t) in targets.iter().enumerate() {
+        let declared = t.attr.datatype.clone().unwrap_or_default();
+        if let Some(g) = gen(t, &getter(t)) {
+            // Projections fetching the getter are under "must change" already.
+            for e in callers.get(g.id.as_str()).into_iter().flatten().filter(|e| !idx.files[e.file].kind.is_marble()) {
+                check[ti].push((e.file, e.line, format!("calls {}.{}(), which returns {declared}", pkg(t), getter(t))));
+            }
+        }
+        // The field of the record Get() returns: `var.column` where `var` is declared as the
+        // package's Public_Rec, or `Pkg.Get(...).column`.
+        if t.attr.public && !t.attr.exclude_get {
+            if let Some(g) = gen(t, "Get") {
+                let files: HashSet<usize> = callers.get(g.id.as_str()).into_iter().flatten().map(|e| e.file).collect();
+                let col = column(t);
+                let rec_type = format!("{}.public_rec", pkg(t).to_ascii_lowercase());
+                let get_call = format!("{}.get(", pkg(t).to_ascii_lowercase());
+                for f in files {
+                    let lines: Vec<String> = r.file_lines(f).iter().map(|l| plsql::blank_comments_and_strings(l).to_ascii_lowercase()).collect();
+                    let vars: HashSet<String> = lines
+                        .iter()
+                        .filter(|l| l.contains(&rec_type))
+                        .filter_map(|l| l.split_whitespace().next().filter(|w| w.chars().all(is_name_char)).map(str::to_string))
+                        .collect();
+                    for (i, l) in lines.iter().enumerate() {
+                        let via_var = vars.iter().any(|v| has_word(&l.replace(&format!("{v}.{col}"), &format!(" {v}__{col} ")), &format!("{v}__{col}")));
+                        let direct = l.contains(&get_call) && l.contains(&format!(").{col}"));
+                        if via_var || direct {
+                            check[ti].push((f, i + 1, format!("reads {col} from the record {}.Get() returns", pkg(t))));
+                        }
+                    }
+                }
+            }
+        }
+        // SQL that reads the column from the LU's view: unprefixed, or with that view's alias,
+        // in a query whose FROM has the view.
+        if let Some(view) = r.generated.iter().find(|(_, (l, tab))| !*tab && l.eq_ignore_ascii_case(&t.lu)).map(|(n, _)| n.clone()) {
+            let vid = idx.relations.iter().find(|x| x.name == view).map(|x| x.id.clone());
+            let files: HashSet<usize> = idx.edges.iter().filter(|e| e.kind == EdgeKind::Reads && Some(&e.to) == vid.as_ref()).map(|e| e.file).collect();
+            let col = column(t);
+            for f in files {
+                if !matches!(idx.files[f].kind, FileKind::Plsql | FileKind::Plsvc | FileKind::Views) {
+                    continue;
+                }
+                let text = r.file_lines(f).join("\n");
+                let prepared = sqlscope::prepare(&text);
+                let plines: Vec<&str> = prepared.lines().collect();
+                for b in sqlscope::blocks(&prepared) {
+                    let Some(item) = b.from.iter().find(|i| i.name == view) else { continue };
+                    let alias = item.alias.clone().unwrap_or_else(|| view.clone()).to_ascii_lowercase();
+                    let from_end = b.from.iter().map(|i| i.line).max().unwrap_or(b.select_line);
+                    let end = (from_end.saturating_sub(1)..plines.len()).find(|&i| plines[i].contains(';')).map_or(plines.len(), |i| i + 1);
+                    let unprefixed: HashSet<usize> = if b.from.len() == 1 {
+                        b.refs.iter().filter(|(c, _)| c.eq_ignore_ascii_case(&col)).map(|(_, l)| *l).collect()
+                    } else {
+                        HashSet::new()
+                    };
+                    for ln in b.select_line..=end.min(plines.len()) {
+                        let l = plines[ln - 1].to_ascii_lowercase();
+                        if unprefixed.contains(&ln) || l.contains(&format!("{alias}.{col}")) && has_word(&l.replace(&format!("{alias}.{col}"), " __hit__ "), "__hit__") {
+                            check[ti].push((f, ln, format!("selects {col} from view {view}")));
+                        }
+                    }
+                }
+            }
+        }
+        // Other entities that copy it with a USE_DEFINITION.
+        for files in r.lus.values() {
+            for &(ef, e) in files {
+                let other = e.name.as_ref().map(|n| n.0.clone()).unwrap_or_default();
+                for assoc in e.associations.iter().filter(|a| a.to_entity.eq_ignore_ascii_case(&t.lu)) {
+                    for u in assoc.uses.iter().filter(|u| u.column.eq_ignore_ascii_case(&t.attr.name)) {
+                        let copy = r.attributes(&other).find(|(_, a)| a.name.eq_ignore_ascii_case(u.attribute()));
+                        let note = match copy.and_then(|(_, a)| attr_kind(a.datatype.as_deref())) {
+                            Some(k) if k != t.origin => format!("{other}.{} copies it (USE_DEFINITION) and is declared {}", u.attribute(), k.datatype()),
+                            Some(_) => continue,
+                            None => format!("{other}.{} copies it (USE_DEFINITION)", u.attribute()),
+                        };
+                        must[ti].push((ef, u.line, note));
+                    }
+                }
+            }
+        }
+    }
+
+    for (ti, t) in targets.iter().enumerate() {
+        let f = &mut out[t.finding];
+        for list in [&mut must[ti], &mut check[ti]] {
+            list.sort();
+            list.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        }
+        let step = |(file, line, note): &(usize, usize, String)| Step { file: *file, line: *line, text: r.line(*file, *line).trim().to_string(), note: Some(note.clone()) };
+        let want = wanted(t);
+        if !must[ti].is_empty() {
+            f.evidence.push(Trail { title: format!("Also change ({}): declared with the old type, should be {want}", must[ti].len()), steps: must[ti].iter().map(step).collect() });
+        }
+        if !check[ti].is_empty() {
+            f.evidence.push(Trail { title: format!("Check how the value is used ({})", check[ti].len()), steps: check[ti].iter().map(step).collect() });
+        }
+        f.message.push_str(&format!(
+            " Besides the attribute, {} other declaration{} must change and {} place{} use the value; all are listed below.",
+            must[ti].len(),
+            if must[ti].len() == 1 { "" } else { "s" },
+            check[ti].len(),
+            if check[ti].len() == 1 { "" } else { "s" }
+        ));
+    }
+}
+
+/// Whether a projection attribute type disagrees with the origin, and how to say so.
+fn wrong_type(ty: &str, t: &Target) -> Option<String> {
+    match proj_kind(ty) {
+        Some(k) if k != t.origin => Some(format!("declared {ty}, but its value is {}", t.origin.word())),
+        Some(_) => None,
+        None => Some(format!("declared {ty}: check it against {}", t.origin.word())),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

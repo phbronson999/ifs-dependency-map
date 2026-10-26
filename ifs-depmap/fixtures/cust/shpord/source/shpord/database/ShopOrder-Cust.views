@@ -7,3 +7,12 @@ SELECT s.order_no order_no,
        n.note     ti_note
 FROM   shop_ord s
        LEFT JOIN ti_shop_order_note_tab n ON n.order_no = s.order_no;
+
+VIEW Ti_Shop_Order_Vendor IS
+SELECT so.order_no       order_no,
+       so.primary_vendor primary_vendor
+FROM   shop_ord so;
+
+VIEW Ti_Vendor_Note IS
+SELECT primary_vendor primary_vendor
+FROM   ti_vendor_note_tab;

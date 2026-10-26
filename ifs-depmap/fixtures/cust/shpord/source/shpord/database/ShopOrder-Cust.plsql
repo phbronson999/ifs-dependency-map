@@ -55,3 +55,16 @@ IS
 BEGIN
    super(newrec_);
 END Check_Update_Ti___;
+
+FUNCTION Get_Ti_Vendor___ (
+   order_no_ IN VARCHAR2 ) RETURN NUMBER
+IS
+   rec_   Shop_Order_API.Public_Rec;
+   other_ Supplier_Part_API.Public_Rec;
+BEGIN
+   rec_ := Shop_Order_API.Get(order_no_);
+   IF other_.primary_vendor IS NULL THEN
+      RETURN rec_.primary_vendor;
+   END IF;
+   RETURN 0;
+END Get_Ti_Vendor___;
