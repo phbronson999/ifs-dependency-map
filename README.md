@@ -2,7 +2,8 @@
   <img src="ifs-depmap/assets/hero.gif" width="860"
        alt="IFS Dependency Map demo: the Components view shows IFS Cloud components in bands by how much Cust code touches them; selecting one filters to its links; the Files and Objects views group code by file type and file; the Findings panel lists upgrade findings, and opening one shows the Core diff (a cursor where IFS added customer_info) next to the Cust attribute that now conflicts with it.">
 </p>
-<p align="center"><a href="ifs-depmap/assets/hero.mp4">Watch the full walkthrough (2 min, MP4)</a></p>
+<p align="center"><a href="ifs-depmap/assets/hero.mp4">Watch the full walkthrough (2 min, MP4)</a> ·
+<a href="https://phbronson999.github.io/ifs-dependency-map/">Try it in your browser</a> (sample data, nothing to install)</p>
 
 # IFS Dependency Map
 
@@ -184,6 +185,7 @@ npm install                                        # typescript + tauri cli
 npm run tauri dev                                  # desktop app
 npm run tauri build                                # installers in src-tauri/target/release/bundle/
 npm run demo                                       # ui/dist/demo.html with the sample data embedded
+npm run pages                                      # the same page as docs/index.html, the GitHub Pages demo
 ```
 
 The desktop app remembers the two folders. "Open" on any file runs

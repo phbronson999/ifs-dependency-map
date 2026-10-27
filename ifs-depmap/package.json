@@ -6,6 +6,7 @@
   "scripts": {
     "build:ui": "node ui/build.mjs",
     "demo": "cargo run -q --bin ifsdep -- --core fixtures/core --cust fixtures/cust --json ui/.build/graph.json && node ui/build.mjs --demo ui/.build/graph.json",
+    "pages": "npm run demo && node -e \"require('fs').copyFileSync('ui/dist/demo.html', '../docs/index.html')\"",
     "test": "cargo test",
     "tauri": "tauri"
   },
