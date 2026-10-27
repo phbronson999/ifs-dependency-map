@@ -168,13 +168,10 @@ function setIndex(idx: GraphIndex) {
   ui.focus.clear();
   ui.objUnits.clear();
   ui.selected = null;
-  $("stats").textContent = statsText(idx);
+  // The header stays free for what you interact with; the totals are in the Overview.
+  $("stats").textContent = "";
   renderRoots();
   renderAll(true);
-}
-
-function statsText(idx: GraphIndex) {
-  return `${idx.stats.files.toLocaleString()} files · ${idx.stats.units.toLocaleString()} units · ${idx.stats.edges.toLocaleString()} links · indexed in ${idx.stats.millis} ms`;
 }
 
 async function reindex() {
@@ -187,7 +184,7 @@ async function reindex() {
     setIndex(JSON.parse(json));
   } catch (e) {
     // Cancelled: keep what was loaded before, if anything.
-    $("stats").textContent = ui.model ? statsText(ui.model.idx) : "";
+    $("stats").textContent = "";
     toast(String(e) === "cancelled" ? "Indexing cancelled" : `Indexing failed: ${e}`);
   } finally {
     ui.busy = false;
@@ -812,7 +809,8 @@ function overviewHtml(m: Model) {
 <h3>${errors ? `${errors} thing${errors === 1 ? "" : "s"} to fix` : "No blocking problems"}</h3>
 <p>Each box is a component. Lines are includes, projection use and PL/SQL calls that cross components; the number is how many. Double-tap a component to see its files, and a file to see what it declares.</p>
 ${findingsSection}
-<section><h4>Indexed</h4><dl class="kv">${kinds}<dt>units</dt><dd>${s.units.toLocaleString()}</dd><dt>objects</dt><dd>${s.objects.toLocaleString()}</dd></dl></section>
+<section><h4>Indexed</h4><dl class="kv"><dt>files</dt><dd>${s.files.toLocaleString()}</dd><dt>units</dt><dd>${s.units.toLocaleString()}</dd><dt>objects</dt><dd>${s.objects.toLocaleString()}</dd><dt>links</dt><dd>${s.edges.toLocaleString()}</dd><dt>took</dt><dd>${(s.millis / 1000).toFixed(1)} s</dd></dl>
+<h4>Files by type</h4><dl class="kv">${kinds}</dl></section>
 ${m.idx.core_root || m.idx.cust_root ? `<section><h4>Folders</h4><dl class="kv"><dt>Core</dt><dd class="mono">${esc(m.idx.core_root ?? "—")}</dd><dt>Cust</dt><dd class="mono">${esc(m.idx.cust_root ?? "—")}</dd></dl></section>` : ""}
 ${m.idx.notes.length ? `<section><h4>Notes</h4>${m.idx.notes.slice(0, 20).map((n) => `<p class="mono">${esc(n)}</p>`).join("")}</section>` : ""}
 </div>`;
