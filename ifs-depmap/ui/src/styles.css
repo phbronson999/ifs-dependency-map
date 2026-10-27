@@ -289,7 +289,7 @@ marker.m-sel path { fill: var(--accent); }
 .d .eyebrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font: 11px var(--font-mono); color: var(--muted); letter-spacing: 0.04em; }
 .d p { margin: 0; overflow-wrap: anywhere; }
 .d section { display: grid; gap: 6px; }
-.d section > h4 { margin: 0; font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.d section > h4, .d section > .section-head > h4 { margin: 0; font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 999px; font: 600 10.5px/1.6 var(--font-mono); letter-spacing: 0.03em; }
 .pill.error { background: var(--error-soft); color: var(--error); }
 .pill.warning { background: var(--warn-soft); color: var(--warn); }
@@ -439,3 +439,8 @@ button.linkish:hover { color: var(--ink); text-decoration: underline; }
 .topbar { position: relative; }
 .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--line-soft); overflow: hidden; }
 .progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 400ms linear; }
+/* A heading with a small control at its right end ("HOW THIS WAS FOUND ... Hide 7 Core steps"). */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.head-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.head-toggle:hover { color: var(--ink); border-color: var(--accent); }
+.head-toggle .pill { padding: 0 5px; }

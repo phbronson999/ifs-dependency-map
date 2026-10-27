@@ -914,13 +914,14 @@ function evidenceHtml(f: Finding) {
     return out;
   };
   const coreSteps = f.evidence.reduce((n, t) => n + t.steps.filter(isCore).length, 0);
+  // Says what clicking does: hide the Core steps while they show, show them while folded.
   const toggle = coreSteps
-    ? `<div class="details-filter"><button class="sev-chip scope" data-steps-core aria-pressed="${!ui.stepsHideCore}" title="Show or hide the steps in Core files"><span class="pill core">Core</span>steps <b>${coreSteps}</b></button></div>`
+    ? `<button class="head-toggle" data-steps-core aria-pressed="${ui.stepsHideCore}" title="${ui.stepsHideCore ? "Show the steps in Core files" : "Fold the steps in Core files into one line each"}">${ui.stepsHideCore ? "Show" : "Hide"} ${coreSteps} <span class="pill core">Core</span> step${coreSteps === 1 ? "" : "s"}</button>`
     : "";
   const trails = f.evidence
     .map((t) => `<div class="trail"><div class="trail-title">${esc(t.title)}</div><ol>${stepsOf(t.steps)}</ol></div>`)
     .join("");
-  return `<section><h4>How this was found</h4>${toggle}${trails}</section>`;
+  return `<section><div class="section-head"><h4>How this was found</h4>${toggle}</div>${trails}</section>`;
 }
 
 /** Upgrade findings: the Core declaration before and now, as a diff with both line numbers. */
