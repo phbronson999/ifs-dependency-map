@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 46);
+    assert_eq!(idx.stats.files, 47);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -270,7 +270,7 @@ fn unresolved_include() {
 #[test]
 fn total_findings_are_exactly_the_planted_ones() {
     let idx = fixtures();
-    assert_eq!(idx.findings.len(), 17);
+    assert_eq!(idx.findings.len(), 18);
 }
 
 #[test]
@@ -541,11 +541,29 @@ fn upgrade_comparison_says_what_changed_under_each_customization() {
 }
 
 #[test]
+fn a_derived_value_comes_from_the_lus_own_hand_written_view() {
+    let idx = fixtures();
+    let f = findings(&idx, "DATATYPE_MISMATCH")
+        .into_iter()
+        .find(|f| f.title.starts_with("SupplierPart.VendorName"))
+        .expect("a finding for SupplierPart.VendorName");
+    // Supplier_Part's vendor_name is vendor_no (20); Supplier_Part_By_Part, earlier in the same
+    // file, has a vendor_name too (part_no, 25), but it isn't the LU's view.
+    assert_eq!(f.title, "SupplierPart.VendorName is TEXT (10) but its value can be longer");
+    let s = &f.evidence[1].steps[0];
+    assert_eq!(
+        format!("{}:{} {}", idx.files[s.file].rel_path.rsplit('/').next().unwrap(), s.line, s.note.as_deref().unwrap_or("")),
+        "SupplierPart.views:18 column VENDOR_NAME of the hand-written view SUPPLIER_PART"
+    );
+    assert!(f.evidence[1].title.ends_with("text (20)"), "{}", f.evidence[1].title);
+}
+
+#[test]
 fn datatype_mismatch_follows_the_value_to_its_origin() {
     let idx = fixtures();
     let text = |s: &Step| format!("{}:{} {}", idx.files[s.file].rel_path.rsplit('/').next().unwrap(), s.line, s.note.as_deref().unwrap_or(""));
-    let found = findings(&idx, "DATATYPE_MISMATCH");
-    // Only PrimaryVendor: DefaultVendor calls the generated one-parameter Get_Vendor_No (TEXT),
+    let found: Vec<_> = findings(&idx, "DATATYPE_MISMATCH").into_iter().filter(|f| f.involves_cust).collect();
+    // In Cust, only PrimaryVendor: DefaultVendor calls the generated one-parameter Get_Vendor_No (TEXT),
     // not the hand-written two-parameter overload (NUMBER); need_date + 7 is a date.
     assert_eq!(found.iter().map(|f| f.title.as_str()).collect::<Vec<_>>(), ["ShopOrder.PrimaryVendor is NUMBER but its value is text"]);
     let f = found[0];

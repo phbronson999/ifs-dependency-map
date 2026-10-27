@@ -1,0 +1,19 @@
+-----------------------------------------------------------------------------
+--  Logical unit: SupplierPart
+--  Component:    SHPORD
+-----------------------------------------------------------------------------
+layer Core;
+
+-- Another view in the LU's file with the same alias, from something else. The derived
+-- attribute VendorName comes from the LU's own view below, not from this one.
+VIEW Supplier_Part_By_Part IS
+SELECT part_no      part_no,
+       part_no      vendor_name
+FROM   supplier_part_tab;
+
+-- The LU's own view, written by hand.
+VIEW Supplier_Part IS
+SELECT part_no      part_no,
+       vendor_no    vendor_no,
+       vendor_no    vendor_name
+FROM   supplier_part_tab;

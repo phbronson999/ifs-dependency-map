@@ -16,5 +16,11 @@
          <DATATYPE>TEXT</DATATYPE>
          <LENGTH>20</LENGTH>
       </ATTRIBUTE>
+      <ATTRIBUTE>
+         <NAME>VendorName</NAME>
+         <IS_DERIVED>1</IS_DERIVED>
+         <DATATYPE>TEXT</DATATYPE>
+         <LENGTH>10</LENGTH>
+      </ATTRIBUTE>
    </ATTRIBUTES>
 </ENTITY>

@@ -171,10 +171,19 @@ struct Resolver<'a> {
     idx: &'a Index,
     /// LU (upper) → its entity files, Core first.
     lus: HashMap<String, Vec<(usize, &'a ParsedEntity)>>,
-    /// Generated view or table name → (LU, is the table).
+    /// Generated view or table name → (LU, is the table). When two LUs give the same name,
+    /// the first LU in name order keeps it.
     generated: HashMap<String, (String, bool)>,
     /// View name → definitions, Cust first (a Cust @Override is what runs).
     views: HashMap<String, Vec<(usize, &'a db::ViewDef)>>,
+    /// LU (upper) → the views in its `.views` files, in file order, Cust files first.
+    views_of_lu: HashMap<String, Vec<(usize, &'a db::ViewDef)>>,
+    /// LU (upper) → its own view's name (the generated name, or the entity's rename).
+    lu_view: HashMap<String, String>,
+    /// LU (upper) → its table's name, likewise.
+    lu_table: HashMap<String, String>,
+    /// Package (upper) → the LU (upper) it's generated for; the first in name order.
+    lu_of_package: HashMap<String, String>,
     tables: HashMap<String, (usize, &'a db::TableDef)>,
     /// Package (upper) → unit index.
     packages: HashMap<String, usize>,
@@ -199,21 +208,39 @@ impl<'a> Resolver<'a> {
             files.sort_by_key(|&(f, _)| idx.files[f].root != Layer::Core);
         }
         let mut generated = HashMap::new();
-        for (key, files) in &lus {
+        let (mut lu_view, mut lu_table, mut lu_of_package) = (HashMap::new(), HashMap::new(), HashMap::new());
+        // In name order, so a name two LUs share always goes to the same one.
+        let mut keys: Vec<&String> = lus.keys().collect();
+        keys.sort();
+        for key in keys {
+            let files = &lus[key];
             let lu = files[0].1.name.as_ref().unwrap().0.clone();
             let snake = plsql::snake_name(&lu).to_ascii_uppercase();
             // A Cust rename wins, as for the relations in the graph.
             let pick = |view: bool| {
                 files.iter().rev().find_map(|(_, e)| if view { e.view.clone() } else { e.table.clone() }).map(|(n, _)| n)
             };
-            generated.insert(pick(true).unwrap_or_else(|| snake.clone()), (key.clone(), false));
-            generated.insert(pick(false).unwrap_or_else(|| format!("{snake}_TAB")), (key.clone(), true));
+            let view = pick(true).unwrap_or_else(|| snake.clone());
+            let table = pick(false).unwrap_or_else(|| format!("{snake}_TAB"));
+            lu_view.insert(key.clone(), view.clone());
+            lu_table.insert(key.clone(), table.clone());
+            lu_of_package.entry(plsql::package_name(&lu).to_ascii_uppercase()).or_insert_with(|| key.clone());
+            generated.entry(view).or_insert_with(|| (key.clone(), false));
+            generated.entry(table).or_insert_with(|| (key.clone(), true));
         }
         let mut views: HashMap<String, Vec<(usize, &db::ViewDef)>> = HashMap::new();
         for &(f, v) in &inputs.views {
             views.entry(v.name.clone()).or_default().push((f, v));
         }
         for defs in views.values_mut() {
+            defs.sort_by_key(|&(f, _)| idx.files[f].root != Layer::Cust);
+        }
+        let mut views_of_lu: HashMap<String, Vec<(usize, &db::ViewDef)>> = HashMap::new();
+        for &(f, v) in &inputs.views {
+            let stem = idx.files[f].rel_path.rsplit('/').next().unwrap_or("").split('.').next().unwrap_or("");
+            views_of_lu.entry(stem.trim_end_matches("-Cust").to_ascii_uppercase()).or_default().push((f, v));
+        }
+        for defs in views_of_lu.values_mut() {
             defs.sort_by_key(|&(f, _)| idx.files[f].root != Layer::Cust);
         }
         let tables = inputs.tables.iter().map(|&(f, t)| (t.name.clone(), (f, t))).collect();
@@ -229,7 +256,22 @@ impl<'a> Resolver<'a> {
                 methods.entry((id_index(&o.unit), o.name.to_ascii_uppercase())).or_default().push(oi);
             }
         }
-        Resolver { idx, lus, generated, views, tables, packages, methods, lines: RefCell::default(), visiting: RefCell::default(), depth: RefCell::default() }
+        Resolver {
+            idx,
+            lus,
+            generated,
+            views,
+            views_of_lu,
+            lu_view,
+            lu_table,
+            lu_of_package,
+            tables,
+            packages,
+            methods,
+            lines: RefCell::default(),
+            visiting: RefCell::default(),
+            depth: RefCell::default(),
+        }
     }
 
     fn line(&self, file: usize, line: usize) -> String {
@@ -334,22 +376,22 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        // The LU's hand-written view: the item of that name, in a view of the LU's .views file.
+        // The LU's hand-written view: the item of that name in the LU's own view (named like
+        // the generated one), else in the first view of the LU's .views file that has it. Other
+        // views there can give the same alias other values (Company_Person_Active's
+        // employee_name isn't Company_Person's).
         let col = plsql::snake_name(&a.name).to_ascii_uppercase();
-        for defs in self.views.values() {
-            for &(vf, v) in defs {
-                let stem = self.idx.files[vf].rel_path.rsplit('/').next().unwrap_or("").split('.').next().unwrap_or("").trim_end_matches("-Cust");
-                if !stem.eq_ignore_ascii_case(lu) {
-                    continue;
-                }
-                if let Some(item) = v.items.iter().find(|i| i.name.as_deref() == Some(col.as_str())) {
-                    let mut o = self.expr(&item.expr, &v.from, None)?;
-                    o.steps.insert(0, (vf, item.line, format!("column {col} of the hand-written view {}", v.name)));
-                    return Some(o);
-                }
-            }
-        }
-        None
+        let key = lu.to_ascii_uppercase();
+        let defs = self.views_of_lu.get(&key).map(Vec::as_slice).unwrap_or(&[]);
+        let own = self.lu_view.get(&key);
+        let (vf, v, item) = defs
+            .iter()
+            .filter(|(_, v)| own.is_some_and(|o| v.name.eq_ignore_ascii_case(o)))
+            .chain(defs.iter())
+            .find_map(|&(vf, v)| v.items.iter().find(|i| i.name.as_deref() == Some(col.as_str())).map(|item| (vf, v, item)))?;
+        let mut o = self.expr(&item.expr, &v.from, None)?;
+        o.steps.insert(0, (vf, item.line, format!("column {col} of the hand-written view {}", v.name)));
+        Some(o)
     }
 
     /// The type an SQL expression produces. `from` resolves `alias.col`; `own_lu` resolves a
@@ -435,7 +477,7 @@ impl<'a> Resolver<'a> {
                 return self.column(&from[0].name, e);
             }
             if let Some(lu) = own_lu {
-                let table = self.generated.iter().find(|(_, (l, t))| *t && l.eq_ignore_ascii_case(lu)).map(|(n, _)| n.clone())?;
+                let table = self.lu_table.get(&lu.to_ascii_uppercase()).cloned()?;
                 return self.column(&table, e);
             }
         }
@@ -584,7 +626,7 @@ impl<'a> Resolver<'a> {
                 if let Some(rel) = upper.strip_suffix("%ROWTYPE") {
                     self.column(rel.trim(), f)?
                 } else if let Some(pkg) = upper.strip_suffix(".PUBLIC_REC") {
-                    let (lu, _) = self.lus.iter().find(|(k, _)| plsql::package_name(&self.lus[*k][0].1.name.as_ref().unwrap().0).eq_ignore_ascii_case(pkg))?;
+                    let lu = self.lu_of_package.get(pkg)?;
                     let lu_name = self.lus[lu][0].1.name.as_ref().unwrap().0.clone();
                     let (af, a) = self.attributes(lu).find(|(_, a)| plsql::snake_name(&a.name).eq_ignore_ascii_case(f))?;
                     self.declared(af, a, &lu_name)?
@@ -838,7 +880,7 @@ fn places(idx: &Index, r: &Resolver, callers: &HashMap<&str, Vec<&Edge>>, target
         }
         // SQL that reads the column from the LU's view: unprefixed, or with that view's alias,
         // in a query whose FROM has the view.
-        if let Some(view) = r.generated.iter().find(|(_, (l, tab))| !*tab && l.eq_ignore_ascii_case(&t.lu)).map(|(n, _)| n.clone()) {
+        if let Some(view) = r.lu_view.get(&t.lu.to_ascii_uppercase()).cloned() {
             let vid = idx.relations.iter().find(|x| x.name == view).map(|x| x.id.clone());
             let files: HashSet<usize> = idx.edges.iter().filter(|e| e.kind == EdgeKind::Reads && Some(&e.to) == vid.as_ref()).map(|e| e.file).collect();
             let col = column(t);

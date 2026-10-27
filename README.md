@@ -177,7 +177,7 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 47 tests
+cargo test                                         # 48 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 cargo run --bin ifsdep -- --trace <file.plsql> <line>   # what Trace shows for the method on that line
 
