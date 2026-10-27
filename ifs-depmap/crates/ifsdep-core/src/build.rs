@@ -23,6 +23,9 @@ pub struct IndexOptions<'a> {
     pub prev_core: Option<&'a Path>,
     /// Set from another thread to stop indexing early (`try_index` then returns `Cancelled`).
     pub cancel: Option<&'a AtomicBool>,
+    /// Told what indexing is doing: a stage ("Reading Core files"), and while files are read,
+    /// how many of how many (0, 0 otherwise). Called at most every few hundred files.
+    pub progress: Option<&'a (dyn Fn(&str, usize, usize) + Sync)>,
 }
 
 /// Indexing was stopped through `IndexOptions::cancel`.
@@ -77,6 +80,11 @@ pub fn index(opts: &IndexOptions) -> Index {
 pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     // Checked between files and between stages: stopping takes at most one stage.
     let check = || if opts.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) { Err(Cancelled) } else { Ok(()) };
+    let report = |stage: &str, done: usize, total: usize| {
+        if let Some(p) = opts.progress {
+            p(stage, done, total);
+        }
+    };
     let start = Instant::now();
     let mut idx = Index {
         version: 1,
@@ -93,10 +101,15 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
             idx.notes.push(format!("{layer:?} folder not found: {}", root.display()));
             continue;
         }
+        report(&format!("Finding {layer:?} files"), 0, 0);
         let (files, notes) = scan::scan_root(root);
         idx.notes.extend(notes);
-        for s in files {
+        let (total, stage) = (files.len(), format!("Reading {layer:?} files"));
+        for (n, s) in files.into_iter().enumerate() {
             check()?;
+            if n % 250 == 0 || n + 1 == total {
+                report(&stage, n + 1, total);
+            }
             let text = match std::fs::read(&s.abs) {
                 Ok(b) => String::from_utf8_lossy(&b).into_owned(),
                 Err(e) => {
@@ -141,6 +154,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     }
 
     check()?;
+    report("Grouping files", 0, 0);
     // 2. Group files into logical units.
     let mut unit_map: HashMap<(UnitKind, String), usize> = HashMap::new();
     for fi in 0..idx.files.len() {
@@ -197,6 +211,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     let file_unit = |idx: &Index, fi: usize| -> Option<usize> { idx.files[fi].unit.as_deref().map(id_index) };
 
     check()?;
+    report("Collecting declarations", 0, 0);
     // 3. Objects.
     let mut pending_refs: Vec<(usize, marble::Ref)> = Vec::new();
     let mut method_objects: HashMap<(usize, usize), usize> = HashMap::new();
@@ -328,6 +343,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     }
 
     check()?;
+    report("Linking files", 0, 0);
     // 4. Unit-level edges.
     let mut edges: Vec<Edge> = Vec::new();
     let mut unresolved: Vec<Finding> = Vec::new();
@@ -452,6 +468,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     }
 
     check()?;
+    report("Linking declarations", 0, 0);
     // 5. Object resolution, preferring same unit, then what the unit can reach.
     let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
     for e in &edges {
@@ -952,6 +969,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     idx.relations = relations;
 
     check()?;
+    report("Reading components", 0, 0);
     // 6. Components and deploy.ini connections.
     let mut comps: BTreeMap<String, Component> = BTreeMap::new();
     for (fi, f) in idx.files.iter().enumerate() {
@@ -986,6 +1004,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     idx.components = comps.into_values().collect();
 
     check()?;
+    report("Checking rules", 0, 0);
     // 7. Findings.
     let mut findings = unresolved;
     findings.extend(analyze::run(&idx, &cols));
@@ -1001,9 +1020,11 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
         }
     }
     check()?;
+    report("Checking datatypes", 0, 0);
     findings.extend(datatypes::run(&idx, inputs));
     check()?;
     if let Some(prev) = opts.prev_core {
+        report("Comparing with previous Core", 0, 0);
         let mut notes = Vec::new();
         upgrade::run(&idx, prev, &mut findings, &mut notes);
         idx.notes.extend(notes);

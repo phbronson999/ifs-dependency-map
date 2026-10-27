@@ -152,7 +152,7 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 42 tests
+cargo test                                         # 43 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 
 npm install                                        # typescript + tauri cli

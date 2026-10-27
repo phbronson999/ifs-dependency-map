@@ -435,3 +435,7 @@ p.muted { color: var(--muted); font-size: 12.5px; }
 .step.fold { padding-bottom: 8px; }
 button.linkish { background: none; border: 0; padding: 0; color: var(--muted); font: 12px var(--font-body); cursor: pointer; text-align: left; }
 button.linkish:hover { color: var(--ink); text-decoration: underline; }
+/* Indexing progress: a thin bar along the bottom of the header. */
+.topbar { position: relative; }
+.progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--line-soft); overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 400ms linear; }

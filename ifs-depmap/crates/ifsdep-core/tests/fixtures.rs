@@ -627,3 +627,31 @@ fn indexing_stops_when_cancelled() {
     // index() reports it rather than failing.
     assert_eq!(index(&opts).notes, ["Indexing was cancelled."]);
 }
+
+#[test]
+fn indexing_reports_its_progress() {
+    use std::sync::Mutex;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let (core, cust) = (root.join("core"), root.join("cust"));
+    let seen: Mutex<Vec<(String, usize, usize)>> = Mutex::new(Vec::new());
+    let progress = |stage: &str, done: usize, total: usize| seen.lock().unwrap().push((stage.to_string(), done, total));
+    let idx = index(&IndexOptions { core: Some(&core), cust: Some(&cust), progress: Some(&progress), ..Default::default() });
+    let seen = seen.into_inner().unwrap();
+    // Each stage once, in order (file counts repeat a stage).
+    let mut stages: Vec<&str> = seen.iter().map(|(s, _, _)| s.as_str()).collect();
+    stages.dedup();
+    assert_eq!(
+        stages,
+        [
+            "Finding Core files", "Reading Core files", "Finding Cust files", "Reading Cust files", "Grouping files",
+            "Collecting declarations", "Linking files", "Linking declarations", "Reading components", "Checking rules",
+            "Checking datatypes",
+        ]
+    );
+    // Reading counts up to every file.
+    let read: usize = ["Reading Core files", "Reading Cust files"]
+        .iter()
+        .map(|st| seen.iter().filter(|(s, _, _)| s == st).map(|&(_, d, t)| { assert!(d <= t); d }).max().unwrap())
+        .sum();
+    assert_eq!(read, idx.stats.files);
+}

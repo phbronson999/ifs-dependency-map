@@ -140,6 +140,11 @@ function boot() {
   applyPanels();
   applySelectionStyle();
   bindEvents();
+  // Indexing progress from the app shell: [stage, done, total].
+  tauri?.event?.listen?.("index-progress", (e: { payload: [string, number, number] }) => {
+    [progress.stage, progress.done, progress.total] = e.payload;
+    renderProgress();
+  });
   if (invoke) {
     try {
       const saved = JSON.parse(localStorage.getItem("ifsdepmap.roots") ?? "null");
@@ -174,20 +179,66 @@ function setIndex(idx: GraphIndex) {
   renderAll(true);
 }
 
+/** Where the bar is after each stage, when there's no earlier run of these folders to go by. */
+const STAGE_AT: Record<string, number> = {
+  "Grouping files": 0.62, "Collecting declarations": 0.65, "Linking files": 0.7, "Linking declarations": 0.75,
+  "Reading components": 0.85, "Checking rules": 0.88, "Checking datatypes": 0.93, "Comparing with previous Core": 0.96,
+};
+
+/** What indexing is doing, from the indexer's `index-progress` events. */
+const progress = { stage: "Starting", done: 0, total: 0, started: 0, timer: 0 };
+
+function clock(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** The last time these folders took to index, remembered per set of folders. */
+function lastIndexKey() {
+  return `ifsdepmap.took:${ui.roots.core ?? ""}|${ui.roots.cust ?? ""}|${ui.roots.prev ?? ""}`;
+}
+
+function renderProgress() {
+  const bar = $("progress");
+  if (!ui.busy) {
+    bar.hidden = true;
+    $("stats").textContent = "";
+    return;
+  }
+  const elapsed = performance.now() - progress.started;
+  let last = 0;
+  try { last = Number(localStorage.getItem(lastIndexKey())) || 0; } catch { /* storage unavailable */ }
+  const { stage, done, total } = progress;
+  let fraction: number;
+  if (last) fraction = Math.min(0.97, elapsed / last);
+  else if (total && stage.startsWith("Reading Core")) fraction = 0.55 * (done / total);
+  else if (total && stage.startsWith("Reading Cust")) fraction = 0.55 + 0.05 * (done / total);
+  else fraction = STAGE_AT[stage] ?? 0.02;
+  const counts = total ? ` ${done.toLocaleString()} / ${total.toLocaleString()}` : "";
+  const left = last && elapsed < last ? ` · about ${clock(last - elapsed)} left` : "";
+  $("stats").textContent = `${stage}${counts} · ${clock(elapsed)}${left}`;
+  bar.hidden = false;
+  (bar.firstElementChild as HTMLElement).style.width = `${(fraction * 100).toFixed(1)}%`;
+}
+
 async function reindex() {
   if (!invoke || ui.busy) return;
   ui.busy = true;
-  $("stats").textContent = "Indexing…";
+  Object.assign(progress, { stage: "Starting", done: 0, total: 0, started: performance.now() });
+  progress.timer = window.setInterval(renderProgress, 500);
+  renderProgress();
   renderRoots();
   try {
     const json: string = await invoke("index_folders", { core: ui.roots.core, cust: ui.roots.cust, prevCore: ui.roots.prev });
+    try { localStorage.setItem(lastIndexKey(), String(Math.round(performance.now() - progress.started))); } catch { /* storage unavailable */ }
     setIndex(JSON.parse(json));
   } catch (e) {
     // Cancelled: keep what was loaded before, if anything.
-    $("stats").textContent = "";
     toast(String(e) === "cancelled" ? "Indexing cancelled" : `Indexing failed: ${e}`);
   } finally {
     ui.busy = false;
+    window.clearInterval(progress.timer);
+    renderProgress();
     renderRoots();
   }
 }

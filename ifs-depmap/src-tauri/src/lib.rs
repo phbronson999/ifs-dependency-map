@@ -1,7 +1,8 @@
 //! Thin Tauri shell around `ifsdep-core`. The UI calls these commands:
 //!
 //! - `pick_folder`    → native folder picker
-//! - `index_folders`  → runs the indexer, returns the graph as a JSON string
+//! - `index_folders`  → runs the indexer, returns the graph as a JSON string; on the way it
+//!                       emits `index-progress` events: `[stage, done, total]`
 //! - `cancel_index`   → stops the running `index_folders`, which then fails with "cancelled"
 //! - `open_in_editor` → opens a file at a line in VS Code (`code -g path:line`)
 //!
@@ -10,6 +11,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::Emitter;
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
@@ -31,7 +33,7 @@ fn cancel_index() {
 }
 
 #[tauri::command]
-async fn index_folders(core: Option<String>, cust: Option<String>, prev_core: Option<String>) -> Result<String, String> {
+async fn index_folders(app: tauri::AppHandle, core: Option<String>, cust: Option<String>, prev_core: Option<String>) -> Result<String, String> {
     if core.is_none() && cust.is_none() {
         return Err("Choose a Core or Cust folder first.".into());
     }
@@ -40,11 +42,15 @@ async fn index_folders(core: Option<String>, cust: Option<String>, prev_core: Op
         let core = core.map(PathBuf::from);
         let cust = cust.map(PathBuf::from);
         let prev_core = prev_core.map(PathBuf::from);
+        let progress = move |stage: &str, done: usize, total: usize| {
+            let _ = app.emit("index-progress", (stage, done, total));
+        };
         let opts = ifsdep_core::IndexOptions {
             core: core.as_deref(),
             cust: cust.as_deref(),
             prev_core: prev_core.as_deref(),
             cancel: Some(&CANCEL),
+            progress: Some(&progress),
         };
         ifsdep_core::try_index(&opts).map(|idx| ifsdep_core::json::to_string(&idx)).map_err(|_| "cancelled".to_string())
     })
