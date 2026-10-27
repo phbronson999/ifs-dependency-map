@@ -19,7 +19,7 @@ if (existsSync(localTsc)) execFileSync(process.execPath, [localTsc, "-p", join(h
 else execFileSync("tsc", ["-p", join(here, "tsconfig.json")], { stdio: "inherit", shell: process.platform === "win32" });
 
 // The sources are plain scripts (no imports), joined in dependency order.
-const js = ["types", "layout", "graphs", "app"]
+const js = ["types", "layout", "graphs", "trace", "app"]
   .map((f) => readFileSync(join(here, ".build", `${f}.js`), "utf8"))
   .join("\n");
 const css = readFileSync(join(here, "src", "styles.css"), "utf8");

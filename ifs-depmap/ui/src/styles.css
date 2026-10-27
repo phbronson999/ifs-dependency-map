@@ -387,6 +387,7 @@ marker.m-sel path { fill: var(--accent); }
 .sev-chip.scope .pill { padding: 0 6px; }
 
 /* Selection mode switch and band jumps in the graph toolbar. */
+.selmode[hidden], .jump[hidden] { display: none; }
 .selmode, .jump {
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px; background: var(--raised);
   border: 1px solid var(--line); border-radius: var(--r); font-size: 12px;
@@ -438,3 +439,33 @@ button.linkish:hover { color: var(--ink); text-decoration: underline; }
 .indexing { grid-area: progress; position: relative; height: 24px; overflow: hidden; background: var(--surface); border-bottom: 1px solid var(--line); }
 .indexing i { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--accent-soft); box-shadow: inset 0 -2px 0 var(--accent); transition: width 400ms linear; }
 .indexing span { position: relative; display: block; padding: 0 16px; line-height: 24px; font-size: 12px; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* Trace view: one method's steps, top to bottom */
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.tlines path { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+.tloop rect { fill: var(--accent-soft); fill-opacity: 0.45; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 6 4; }
+.tloop text { fill: var(--accent); font: 600 10.5px var(--font-mono); letter-spacing: 0.04em; }
+.trow text.num { fill: var(--muted); font: 600 11px var(--font-mono); }
+.trow text.loopmark { fill: var(--accent); font: 600 10px var(--font-mono); }
+.trow text .tsub { fill: var(--muted); letter-spacing: 0; }
+.trow.origin-None rect.box { stroke: var(--muted); stroke-dasharray: 3 3; }
+.trow.origin-Error rect.box { stroke: var(--error); fill: var(--error-soft); }
+.trow.origin-Error text.glyph { fill: var(--error); }
+.trow.origin-Loop rect.box { stroke: var(--accent); }
+.trow.origin-Loop text.glyph { fill: var(--accent); }
+.trow.origin-Fork rect.box { stroke: var(--warn); }
+.trow.origin-Fork text.glyph { fill: var(--warn); }
+.trow.k-arm rect.box { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.2; }
+.trow.k-arm text { font-size: 12.5px; }
+.trow.k-arm.is-chosen rect.box { fill: var(--raised); stroke-width: 2.2; }
+.trow.k-arm.is-implied text:not(.sub) { font-style: italic; fill: var(--muted); }
+.trow.k-arm.is-implied rect.box { stroke-dasharray: 4 3; }
+.trow.k-note rect.box { fill: none; stroke: var(--line); stroke-dasharray: 2 3; }
+.trow.k-note text { fill: var(--muted); font-size: 12.5px; }
+.trow.k-method rect.box { stroke-width: 2; }
+.texp circle { fill: var(--raised); stroke: var(--accent); stroke-width: 1.4; }
+.texp text { fill: var(--accent); font: 700 13px var(--font-mono); }
+.texp:hover circle { fill: var(--accent-soft); }
+.trow.is-handle { cursor: grab; }
+.canvas.dragging, .canvas.dragging .trow { cursor: grabbing; }
+.tlinks path { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 6 4; }

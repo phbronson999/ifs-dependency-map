@@ -3,10 +3,52 @@
 //! Indexes the folders, prints the findings, and optionally writes the full
 //! graph as JSON (the same data the desktop UI loads). With `--strict` the exit
 //! code is 1 when there are error-level findings, for use in CI.
+//!
+//! `ifsdep --trace <file.plsql> <line>` prints what the method declared on that line calls,
+//! reads and writes, in order and by branch (what the Trace view draws).
 
 use ifsdep_core::{index, IndexOptions, Severity};
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+fn trace(file: &str, line: usize) -> ExitCode {
+    let text = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("could not read {file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(t) = ifsdep_core::trace::trace_method(&text, line) else {
+        eprintln!("no PROCEDURE or FUNCTION starts on line {line}");
+        return ExitCode::FAILURE;
+    };
+    println!("{} (lines {}-{})", t.name, t.line, t.end_line);
+    print_steps(&t.steps, 1);
+    ExitCode::SUCCESS
+}
+
+fn print_steps(steps: &[ifsdep_core::trace::TraceStep], indent: usize) {
+    let pad = "   ".repeat(indent);
+    for s in steps {
+        match s.kind {
+            "fork" => {
+                println!("{pad}<> {} :{}", s.text, s.line);
+                for a in &s.arms {
+                    println!("{pad}   [{}]{} :{}", a.label, if a.implied { " (implied)" } else { "" }, a.line);
+                    print_steps(&a.steps, indent + 2);
+                }
+            }
+            "loop" | "cursor" => {
+                println!("{pad}{} {} :{}", s.kind, if s.kind == "loop" { &s.text } else { &s.name }, s.line);
+                print_steps(&s.steps, indent + 1);
+            }
+            "error" => println!("{pad}error {}{} :{}", s.package.as_deref().map(|p| format!("{p}.")).unwrap_or_default(), s.name, s.line),
+            "call" => println!("{pad}call {}{} :{}", s.package.as_deref().map(|p| format!("{p}.")).unwrap_or_default(), s.name, s.line),
+            k => println!("{pad}{k} {} :{}", s.name, s.line),
+        }
+    }
+}
 
 fn main() -> ExitCode {
     let mut core: Option<PathBuf> = None;
@@ -17,6 +59,13 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
+            "--trace" => {
+                let (Some(file), Some(line)) = (args.next(), args.next().and_then(|l| l.parse::<usize>().ok())) else {
+                    eprintln!("usage: ifsdep --trace <file.plsql> <line>");
+                    return ExitCode::from(2);
+                };
+                return trace(&file, line);
+            }
             "--core" => core = args.next().map(PathBuf::from),
             "--cust" => cust = args.next().map(PathBuf::from),
             "--prev-core" => prev_core = args.next().map(PathBuf::from),

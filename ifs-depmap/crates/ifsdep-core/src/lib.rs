@@ -23,6 +23,7 @@ pub mod model;
 pub mod plsql;
 pub mod scan;
 pub mod sqlscope;
+pub mod trace;
 pub mod upgrade;
 
 pub use build::{index, try_index, Cancelled, IndexOptions};

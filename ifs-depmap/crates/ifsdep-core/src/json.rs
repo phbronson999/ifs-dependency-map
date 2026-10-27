@@ -162,6 +162,11 @@ json_struct!(DiffLine { op, text, old, new, in_cust });
 json_struct!(Stats { files, by_kind, units, objects, edges, millis });
 json_struct!(Index { version, core_root, cust_root, files, units, objects, relations, edges, components, findings, stats, notes });
 
+use crate::trace::{MethodTrace, TraceArm, TraceStep};
+json_struct!(MethodTrace { name, line, end_line, steps });
+json_struct!(TraceStep { kind, line, package, name, text, steps, arms });
+json_struct!(TraceArm { label, line, implied, steps });
+
 #[cfg(test)]
 mod tests {
     use super::*;

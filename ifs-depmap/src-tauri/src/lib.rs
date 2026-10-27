@@ -4,6 +4,8 @@
 //! - `index_folders`  → runs the indexer, returns the graph as a JSON string; on the way it
 //!                       emits `index-progress` events: `[stage, done, total]`
 //! - `cancel_index`   → stops the running `index_folders`, which then fails with "cancelled"
+//! - `trace_method`   → what the method declared at a file's line calls, reads and writes,
+//!                       in order and by branch (the Trace view), as a JSON string
 //! - `open_in_editor` → opens a file at a line in VS Code (`code -g path:line`)
 //!
 //! The tool is read-only: nothing here writes to the indexed folders.
@@ -59,6 +61,13 @@ async fn index_folders(app: tauri::AppHandle, core: Option<String>, cust: Option
 }
 
 #[tauri::command]
+fn trace_method(path: String, line: usize) -> Result<String, String> {
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("couldn't read {path} ({e})"))?;
+    let trace = ifsdep_core::trace::trace_method(&text, line).ok_or_else(|| format!("no PROCEDURE or FUNCTION starts on line {line} of {path}"))?;
+    Ok(ifsdep_core::json::to_string(&trace))
+}
+
+#[tauri::command]
 fn open_in_editor(path: String, line: usize) -> Result<(), String> {
     let target = format!("{path}:{line}");
     // On Windows `code` is a .cmd shim, so it has to go through cmd.
@@ -74,7 +83,7 @@ fn open_in_editor(path: String, line: usize) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![pick_folder, index_folders, cancel_index, open_in_editor])
+        .invoke_handler(tauri::generate_handler![pick_folder, index_folders, cancel_index, trace_method, open_in_editor])
         .run(tauri::generate_context!())
         .expect("error while running IFS Dependency Map");
 }

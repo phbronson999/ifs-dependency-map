@@ -101,6 +101,27 @@ or the `.entity` it is generated from.
 - **Show: Touched by Cust** limits every view to what's declared in Cust files and
   what Cust code overrides, includes, calls or reads.
 
+## Trace
+
+Select a procedure or function in **Objects** and click **Trace** to follow what it
+does, in the order it runs: its calls, the tables and views it reads, its writes
+(INSERT / UPDATE / DELETE / MERGE) and the errors it raises, numbered top to bottom.
+
+- At each **◆** branch (IF / ELSIF / ELSE, CASE, exception handlers) pick a branch to
+  see inside it. An IF with no ELSE also offers "No ELSE: nothing runs". The trace goes
+  on after the branch either way.
+- **+** on a call opens the method it calls in place. **Trace from it** opens it as a
+  trace of its own in a column to the right, linked to the call. Traces from the same
+  column stack; drag one by its top step to move it. **Start over** goes back to the
+  first method alone.
+- What runs in a loop sits in a shaded box and is marked **↻ in a loop**.
+- A call to a method with a Cust `@Override` goes to the override, since that's what
+  runs. `$IF Component_X_SYS.INSTALLED` lines are skipped and the code inside them traced.
+- The **Steps** chips show or hide calls, reads, writes and errors.
+
+Trace reads the source files, so it works in the desktop app only. The CLI prints the
+same thing: `ifsdep --trace <file.plsql> <line>`.
+
 ## Upgrades
 
 Set **previous Core** (the third folder in the app, or `--prev-core`) to an older Core
@@ -127,6 +148,7 @@ ifs-depmap/
     src/build.rs        units, name resolution, edges
     src/analyze.rs      the rules above
     src/upgrade.rs      comparison with a previous Core
+    src/trace.rs        one method's steps in run order, by branch (Trace view)
     src/bin/ifsdep.rs   CLI
     tests/fixtures.rs   end-to-end tests
   fixtures/core, fixtures/cust   sample folders with every problem planted
@@ -152,8 +174,9 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 43 tests
+cargo test                                         # 46 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
+cargo run --bin ifsdep -- --trace <file.plsql> <line>   # what Trace shows for the method on that line
 
 npm install                                        # typescript + tauri cli
 npm run tauri dev                                  # desktop app

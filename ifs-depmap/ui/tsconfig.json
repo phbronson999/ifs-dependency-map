@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "files": ["src/types.ts", "src/layout.ts", "src/graphs.ts", "src/app.ts"]
+  "files": ["src/types.ts", "src/layout.ts", "src/graphs.ts", "src/trace.ts", "src/app.ts"]
 }

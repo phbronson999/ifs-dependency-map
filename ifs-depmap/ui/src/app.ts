@@ -40,7 +40,7 @@ const ui = {
   /** Selecting something either filters the graph down to it and its links, or highlights them in place. */
   selectMode: "filter" as "filter" | "highlight",
   /** How far from a selected node to go, per level: one link, or the whole chain up and down. */
-  depthByLevel: { components: "direct", units: "direct", objects: "direct" } as Record<Level, Depth>,
+  depthByLevel: { components: "direct", units: "direct", objects: "direct", trace: "direct" } as Record<Level, Depth>,
   /** The current level's depth. */
   get depth(): Depth { return this.depthByLevel[this.level]; },
   /** Draw only what Cust touches (declared in Cust files, or overridden / used by Cust code). */
@@ -179,6 +179,7 @@ function applyScope() {
 
 function setIndex(idx: GraphIndex) {
   ui.model = new Model(idx);
+  traceReset();
   applyScope();
   ui.level = "components";
   ui.components.clear();
@@ -345,6 +346,8 @@ function renderToolbar() {
     b.setAttribute("aria-pressed", String(b.dataset.selmode ? b.dataset.selmode === ui.selectMode : b.dataset.depth === ui.depth));
   }
   for (const b of $("show").querySelectorAll<HTMLElement>("button")) b.setAttribute("aria-pressed", String((b.dataset.show === "cust") === ui.custOnly));
+  // The Trace view draws one method's steps: what the graph shows and selecting don't apply.
+  $("show").hidden = $("selmode").hidden = ui.level === "trace";
   const crumbs: string[] = [`<button data-crumb="components">All components</button>`];
   if (m && ui.level !== "components") {
     if (ui.components.size) {
@@ -354,6 +357,10 @@ function renderToolbar() {
       crumbs.push(`<span>›</span><span>${ui.focus.size === 1 ? esc(m.unit([...ui.focus][0]).name) : `${ui.focus.size} files`} and neighbors</span>`);
     } else if (ui.level === "units") {
       crumbs.push(`<span>›</span><span>all files</span>`);
+    }
+    if (ui.level === "trace" && tr.root) {
+      const o = m.object(tr.root), u = m.unit(o.unit);
+      crumbs.push(`<span>›</span><button data-crumb="comp" data-comp="${esc(u.component)}">${esc(u.component)}</button><span>›</span><button data-action="goto" data-node="${o.id}">${esc(u.name)}.${esc(o.name)}</button>`);
     }
     if (ui.level === "objects" && ui.objUnits.size) {
       const u = m.unit([...ui.objUnits][0]);
@@ -368,15 +375,20 @@ function renderToolbar() {
   if (ui.level === "units") {
     filters += `<div class="chipset"><span class="lbl">Kinds</span>${ALL_UNIT_KINDS.map((k) => chip("unit", k, UNIT_GLYPH[k].toLowerCase(), ui.unitKinds.has(k))).join("")}</div>`;
     filters += `<div class="chipset"><span class="lbl">Links</span>${UNIT_EDGE_KINDS.map((k) => chip("edge", k, EDGE_LABEL[k], ui.edgeKinds.has(k))).join("")}${chip("neighbors", "1", "neighbors", ui.neighbors)}</div>`;
+  } else if (ui.level === "trace") {
+    filters += `<div class="chipset"><span class="lbl">Steps</span>${TRACE_KINDS.map((k) =>
+      `<button class="chip" data-chip="tkind" data-key="${k.key}" aria-pressed="${tr.kinds.has(k.key)}" title="${esc(k.hint)}">${esc(k.label)}</button>`).join("")}<button class="chip" data-action="trace-reset" title="Close the other columns and clear every picked branch and opened call">Start over</button></div>`;
   } else if (ui.level === "objects") {
     filters += `<div class="chipset"><span class="lbl">Links</span>${OBJECT_EDGE_KINDS.map((k) => chip("edge", k, EDGE_LABEL[k], ui.edgeKinds.has(k))).join("")}</div>`;
   }
   filters += `<div class="chipset selctl" title="How the selected item is drawn"><span class="lbl">Selection</span><input type="color" id="sel-color" value="${esc(ui.selColor)}" aria-label="Selection color"><input type="range" id="sel-strength" min="10" max="100" step="5" value="${ui.selStrength}" aria-label="Selection brightness"></div>`;
-  filters += `<div class="chipset" title="How wide a band gets before it wraps onto another line"><span class="lbl">Width</span>${
+  filters += `<div class="chipset" title="${ui.level === "trace" ? "How wide each step's box is" : "How wide a band gets before it wraps onto another line"}"><span class="lbl">Width</span>${
     Object.entries(BAND_WIDTHS).map(([k, w]) => chip("width", k, w.label, ui.width === k)).join("")
   }</div>`;
   // Objects are drawn by the file that declares them; files and components by where the unit comes from.
-  filters += ui.level === "objects"
+  filters += ui.level === "trace"
+    ? `<div class="legend"><span><i class="core"></i>Core method</span><span><i class="cust"></i>Cust method</span><span><i class="db"></i>table / view</span><span>◆ pick a branch to see inside it</span><span>↻ runs in a loop</span></div>`
+    : ui.level === "objects"
     ? `<div class="legend"><span><i class="core"></i>declared in Core file</span><span><i class="cust"></i>declared in Cust file</span><span><i class="db"></i>table / view</span></div>`
     : `<div class="legend"><span><i class="core"></i>Core</span><span><i class="overlay"></i>Core + Cust overlay</span><span><i class="cust"></i>pure Cust</span>${
         ui.level === "components" ? `<span>Select a component to see its links</span>` : ""
@@ -484,6 +496,7 @@ function renderGraph(fit = false) {
   const m = ui.model;
   const vp = $("viewport");
   if (!m) { vp.innerHTML = ""; return; }
+  if (ui.level === "trace") { ui.graph = null; ui.filterKey = ""; renderTrace(fit); return; }
   const full = buildGraph();
   ui.graph = full;
   const h = highlight(full);
@@ -827,6 +840,10 @@ function renderDetails() {
   const el = $("details");
   if (!m) return;
   const sel = ui.selected;
+  if (ui.level === "trace" && tr.root) {
+    const r = tr.rows.get(sel?.type === "node" ? sel.id : "t:0") ?? tr.rows.get("t:0");
+    if (r) { el.innerHTML = traceDetailsHtml(m, r); $("details-head").textContent = "Trace"; return; }
+  }
   if (!sel) { el.innerHTML = overviewHtml(m); $("details-head").textContent = "Overview"; return; }
   if (sel.type === "finding") {
     const f = m.idx.findings.find((x) => x.id === sel.id);
@@ -1038,7 +1055,7 @@ function objectHtml(m: Model, id: string) {
 <dl class="kv"><dt>in</dt><dd>${nodeLink(o.unit)}</dd>${o.target ? `<dt>for</dt><dd class="mono">${esc(o.target)}</dd>` : ""}${o.dynamic ? `<dt>optional</dt><dd class="mono">@DynamicComponentDependency ${esc(o.dynamic)}</dd>` : ""}</dl>
 ${o.generated
   ? `<section><h4>Generated from</h4><p>IFS generates this from the LU's model, so it isn't in any source file. ${o.name === "Get" ? "It returns the whole public record: every public attribute, derived ones included." : "It returns this attribute."}</p>${fileLine(o.file, o.line)}</section>`
-  : `<section><h4>Declared at</h4>${fileLine(o.file, o.line)}</section>`}
+  : `<section><h4>Declared at</h4>${fileLine(o.file, o.line)}${isTraceable(o) ? `<div class="row-actions"><button class="btn small" data-action="trace" data-node="${o.id}">Trace</button></div>` : ""}</section>`}
 ${o.modifier ? `<section><h4>Overrides</h4>${base ? `<p>Base comes from <b>${m.file(base.file).root === "Cust" ? "a pure Cust file" : "Core"}</b> (${esc(m.unit(base.unit).name)}).</p>${fileLine(base.file, base.line)}` : o.base_generated ? `<p>Base is generated from the model, so it isn't in any file.</p>` : `<p>No base found in the indexed files.</p>`}</section>` : ""}
 ${rows.length ? `<section><h4>Links</h4><div class="linklist">${rows.join("")}</div></section>` : ""}
 ${findingLinks(m.findingsByNode.get(id) ?? [])}
@@ -1149,7 +1166,18 @@ function drill(id: string) {
 function setLevel(level: Level) {
   const m = ui.model;
   if (!m) return;
-  const sel = ui.selected?.type === "node" ? ui.selected.id : null;
+  let sel = ui.selected?.type === "node" ? ui.selected.id : null;
+  if (level === "trace") {
+    if (sel && sel[0] === "o" && isTraceable(m.object(sel))) startTrace(sel);
+    else if (tr.root) { ui.level = "trace"; ui.selected = null; renderAll(true); }
+    else toast("Select a procedure or function in the Objects view first, then click Trace.");
+    return;
+  }
+  if (ui.level === "trace") {
+    // Leaving the trace: carry over what the selected step is about (or the traced method).
+    sel = (sel && tr.rows.get(sel)?.obj) || tr.root;
+    ui.selected = sel ? { type: "node", id: sel } : null;
+  }
   if (level === "units" && !ui.components.size && !ui.focus.size) {
     if (sel && sel[0] !== "u" && sel[0] !== "o") ui.components = new Set([sel]);
     else if (sel) ui.focus = new Set([m.unitOf(sel)!]);
@@ -1389,6 +1417,14 @@ function bindEvents() {
       const key = chip.dataset.key!;
       if (chip.dataset.chip === "unit") ui.unitKinds.has(key) ? ui.unitKinds.delete(key) : ui.unitKinds.add(key);
       else if (chip.dataset.chip === "edge") ui.edgeKinds.has(key) ? ui.edgeKinds.delete(key) : ui.edgeKinds.add(key);
+      else if (chip.dataset.chip === "tkind") {
+        const k = key as TraceKind;
+        tr.kinds.has(k) ? tr.kinds.delete(k) : tr.kinds.add(k);
+        renderToolbar();
+        renderGraph();
+        renderDetails();
+        return;
+      }
       else if (chip.dataset.chip === "width") {
         ui.width = key as keyof typeof BAND_WIDTHS;
         try { localStorage.setItem("ifsdepmap.width", ui.width); } catch { /* storage unavailable */ }
@@ -1405,6 +1441,12 @@ function bindEvents() {
       else if (a === "goto") { gotoNode(act.dataset.node!); setPane("graph"); }
       else if (a === "drill") drill(act.dataset.node!);
       else if (a === "finding") selectFinding(act.dataset.f!);
+      else if (a === "trace") startTrace(act.dataset.node!);
+      else if (a === "trace-open") traceToggle(act.dataset.path!);
+      else if (a === "trace-side") traceSide(act.dataset.key!);
+      else if (a === "trace-close") traceCloseSide(Number(act.dataset.col));
+      else if (a === "trace-reset") traceStartOver();
+      else if (a === "trace-arm") traceTap(act.dataset.key!, false);
       return;
     }
     const res = t.closest<HTMLElement>("#search-results [data-node]");
@@ -1471,7 +1513,12 @@ function bindEvents() {
   // Pan, pinch and tap on the canvas.
   const svg = $("canvas");
   const pointers = new Map<number, { x: number; y: number }>();
-  let start: { x: number; y: number; vx: number; vy: number; node: string | null; band: string | null; moved: boolean } | null = null;
+  // drag: in the Trace view, a column being moved by its top step, and where it was.
+  let start: {
+    x: number; y: number; vx: number; vy: number; node: string | null; band: string | null; moved: boolean;
+    drag: { col: number; dx: number; dy: number } | null;
+  } | null = null;
+  let dragFrame = 0;
   let pinch: { d: number; k: number } | null = null;
   const local = (e: PointerEvent) => { const r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   svg.addEventListener("pointerdown", (e) => {
@@ -1481,7 +1528,9 @@ function bindEvents() {
       const node = (e.target as Element).closest?.("[data-node]")?.getAttribute("data-node") ?? null;
       const band = (e.target as Element).closest?.("[data-band]")?.getAttribute("data-band") ?? null;
       viewAnimation++; // a drag or tap takes over from a glide in progress
-      start = { ...local(e), vx: ui.view.x, vy: ui.view.y, node, band, moved: false };
+      const handle = ui.level === "trace" && node ? tr.rows.get(node) : undefined;
+      const drag = handle?.kind === "method" ? { col: handle.col, ...(tr.offsets.get(handle.col) ?? { dx: 0, dy: 0 }) } : null;
+      start = { ...local(e), vx: ui.view.x, vy: ui.view.y, node, band, moved: false, drag };
     } else if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), k: ui.view.k };
@@ -1498,7 +1547,13 @@ function bindEvents() {
     } else if (start) {
       const p = local(e);
       if (Math.abs(p.x - start.x) + Math.abs(p.y - start.y) > 4) start.moved = true;
-      if (start.moved) {
+      if (start.moved && start.drag) {
+        const d = start.drag, k = ui.view.k;
+        tr.offsets.set(d.col, { dx: d.dx + (p.x - start.x) / k, dy: d.dy + (p.y - start.y) / k });
+        svg.classList.add("dragging");
+        cancelAnimationFrame(dragFrame);
+        dragFrame = requestAnimationFrame(() => renderTrace(false));
+      } else if (start.moved) {
         svg.classList.add("panning");
         ui.view.x = start.vx + p.x - start.x;
         ui.view.y = start.vy + p.y - start.y;
@@ -1510,9 +1565,17 @@ function bindEvents() {
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinch = null;
     if (pointers.size) return;
-    svg.classList.remove("panning");
+    svg.classList.remove("panning", "dragging");
     if (start && !start.moved) {
       const now = Date.now();
+      if (start.node && ui.level === "trace") {
+        const double = lastTap.id === start.node && now - lastTap.t < 380;
+        if (traceTap(start.node, double)) {
+          lastTap = { id: "", t: 0 };
+          start = null;
+          return;
+        }
+      }
       if (start.node) {
         if (lastTap.id === start.node && now - lastTap.t < 380) {
           drill(start.node);

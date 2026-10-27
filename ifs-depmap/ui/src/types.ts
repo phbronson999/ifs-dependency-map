@@ -146,3 +146,28 @@ interface GraphIndex {
 function idIndex(id: string): number {
   return Number(id.slice(1));
 }
+
+// What `trace_method` returns (crates/ifsdep-core/src/trace.rs): one method's steps in run order.
+
+/**
+ * kind: call, error, read, insert, update, delete, merge, cursor, fork, loop.
+ * package: a call's package, upper-cased; null within the same package and for `super`.
+ * name: the method, table or view, cursor, or a fork's kind (if, case, exception).
+ */
+interface TraceStep {
+  kind: string;
+  line: number;
+  package: string | null;
+  name: string;
+  /** The source line; a fork's first condition; a loop's header. */
+  text: string;
+  steps: TraceStep[];
+  arms: TraceArm[];
+  /** UI only: the file the line is in, when it isn't the traced method's (generated methods). */
+  file?: number;
+}
+
+/** A fork's branch. `implied`: not in the code, the way past a fork with no ELSE (or no error). */
+interface TraceArm { label: string; line: number; implied: boolean; steps: TraceStep[] }
+
+interface MethodTrace { name: string; line: number; end_line: number; steps: TraceStep[] }

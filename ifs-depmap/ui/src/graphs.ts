@@ -2,7 +2,7 @@
 // units' edges; Files shows logical units (a Core file plus its -Cust
 // overlay); Objects shows declarations inside chosen units.
 
-type Level = "components" | "units" | "objects";
+type Level = "components" | "units" | "objects" | "trace";
 
 interface GNode {
   id: string;           // component name, unit id or object id

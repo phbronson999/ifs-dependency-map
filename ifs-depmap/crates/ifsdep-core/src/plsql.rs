@@ -44,7 +44,7 @@ pub struct ParsedPlsql {
     pub reads: Vec<Read>,
 }
 
-fn is_ident(c: char) -> bool {
+pub(crate) fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '#'
 }
 
@@ -247,7 +247,7 @@ pub fn relations(cleaned: &str) -> Vec<(String, usize)> {
 }
 
 /// Words that end a `FROM a x, b y` list.
-const FROM_LIST_END: &[&str] = &[
+pub(crate) const FROM_LIST_END: &[&str] = &[
     "WHERE", "GROUP", "ORDER", "HAVING", "CONNECT", "START", "UNION", "MINUS", "INTERSECT", "FETCH", "FOR",
     "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "NATURAL", "ON", "USING", "SET", "VALUES", "RETURNING", "WHEN",
     "THEN", "ELSE", "END", "BEGIN", "LOOP", "INTO", "SELECT", "PIVOT", "UNPIVOT", "WITH",
@@ -255,7 +255,7 @@ const FROM_LIST_END: &[&str] = &[
 
 /// Names a `WITH` clause defines (`WITH a AS (...), b (x, y) AS (...)`), keyed by statement
 /// number (statements counted by `;`). They are local to the query, not tables or views.
-fn with_names(cleaned: &str) -> HashSet<(usize, String)> {
+pub(crate) fn with_names(cleaned: &str) -> HashSet<(usize, String)> {
     let mut toks: Vec<&str> = Vec::new();
     for line in cleaned.lines() {
         let mut j = 0;
@@ -421,6 +421,16 @@ fn capitalize(s: &str) -> String {
 /// Replaces comment and string-literal characters with spaces, keeping newlines
 /// so line numbers stay correct.
 pub fn blank_comments_and_strings(text: &str) -> String {
+    blank(text, false)
+}
+
+/// Like `blank_comments_and_strings` but keeps string literals, for showing code. Both put
+/// out one character per character read, so their character positions line up.
+pub fn blank_comments(text: &str) -> String {
+    blank(text, true)
+}
+
+fn blank(text: &str, keep_strings: bool) -> String {
     #[derive(PartialEq)]
     enum S {
         Code,
@@ -449,7 +459,7 @@ pub fn blank_comments_and_strings(text: &str) -> String {
                     continue;
                 } else if c == '\'' {
                     s = S::Str;
-                    out.push(' ');
+                    out.push(if keep_strings { c } else { ' ' });
                 } else {
                     out.push(c);
                 }
@@ -473,14 +483,14 @@ pub fn blank_comments_and_strings(text: &str) -> String {
             }
             S::Str => {
                 if c == '\'' && next == Some('\'') {
-                    out.push_str("  ");
+                    out.push_str(if keep_strings { "''" } else { "  " });
                     i += 2;
                     continue;
                 } else if c == '\'' {
                     s = S::Code;
-                    out.push(' ');
+                    out.push(if keep_strings { c } else { ' ' });
                 } else {
-                    out.push(if c == '\n' { '\n' } else { ' ' });
+                    out.push(if c == '\n' || keep_strings { c } else { ' ' });
                 }
             }
         }
