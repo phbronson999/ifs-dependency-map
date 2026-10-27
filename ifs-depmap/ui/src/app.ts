@@ -185,8 +185,7 @@ function setIndex(idx: GraphIndex) {
   ui.focus.clear();
   ui.objUnits.clear();
   ui.selected = null;
-  // The header stays free for what you interact with; the totals are in the Overview.
-  $("stats").textContent = "";
+  // The totals are in the Overview; the header stays free for what you interact with.
   renderRoots();
   renderAll(true);
 }
@@ -214,7 +213,6 @@ function renderProgress() {
   const bar = $("progress");
   if (!ui.busy) {
     bar.hidden = true;
-    $("stats").textContent = "";
     return;
   }
   const elapsed = performance.now() - progress.started;
@@ -228,7 +226,7 @@ function renderProgress() {
   else fraction = STAGE_AT[stage] ?? 0.02;
   const counts = total ? ` ${done.toLocaleString()} / ${total.toLocaleString()}` : "";
   const left = last && elapsed < last ? ` · about ${clock(last - elapsed)} left` : "";
-  $("stats").textContent = `${stage}${counts} · ${clock(elapsed)}${left}`;
+  $("progress-label").textContent = `${stage}${counts} · ${clock(elapsed)}${left}`;
   bar.hidden = false;
   (bar.firstElementChild as HTMLElement).style.width = `${(fraction * 100).toFixed(1)}%`;
 }
