@@ -80,6 +80,10 @@ const svgNS = "http://www.w3.org/2000/svg";
 /** Which side panels are open, and their widths in px once dragged (null: the default). */
 const panels = { left: true, right: true, leftW: null as number | null, rightW: null as number | null };
 const PANEL_MIN = 220;
+/** The graph keeps at least this much width, whatever the panels' saved widths. */
+const GRAPH_MIN = 320;
+/** Panel widths before any dragging (the stylesheet's defaults, at their widest). */
+const PANEL_DEFAULT = { left: 300, right: 360 };
 
 /** Sets the selected node's color, fill and glow from the Selection controls. */
 function applySelectionStyle() {
@@ -93,9 +97,16 @@ function applyPanels() {
   const app = $("app");
   app.dataset.left = panels.left ? "open" : "closed";
   app.dataset.right = panels.right ? "open" : "closed";
-  // A dragged width applies while the panel is open; closed, the stylesheet's 0 wins.
-  for (const [side, w] of [["left", panels.leftW], ["right", panels.rightW]] as const) {
-    if ((side === "left" ? panels.left : panels.right) && w) app.style.setProperty(`--${side}-w`, `${w}px`);
+  // Open panels get their dragged width (or the default), fitted to the window so the graph
+  // keeps GRAPH_MIN: the right panel gives way first, then the left, down to PANEL_MIN. The
+  // saved widths stay, so a wider window brings them back. Closed, the stylesheet's 0 wins.
+  let lw = panels.left ? (panels.leftW ?? PANEL_DEFAULT.left) : 0;
+  let rw = panels.right ? (panels.rightW ?? PANEL_DEFAULT.right) : 0;
+  let over = lw + rw + GRAPH_MIN - window.innerWidth;
+  if (over > 0 && rw) { const cut = Math.min(over, rw - PANEL_MIN); rw -= Math.max(0, cut); over -= Math.max(0, cut); }
+  if (over > 0 && lw) { lw -= Math.max(0, Math.min(over, lw - PANEL_MIN)); }
+  for (const [side, open, w] of [["left", panels.left, lw], ["right", panels.right, rw]] as const) {
+    if (open) app.style.setProperty(`--${side}-w`, `${Math.round(w)}px`);
     else app.style.removeProperty(`--${side}-w`);
   }
   $("toggle-left").setAttribute("aria-pressed", String(panels.left));
@@ -138,6 +149,7 @@ function boot() {
     if (w && w in BAND_WIDTHS) ui.width = w as keyof typeof BAND_WIDTHS;
   } catch { /* storage unavailable */ }
   applyPanels();
+  window.addEventListener("resize", applyPanels);
   applySelectionStyle();
   bindEvents();
   // Indexing progress from the app shell: [stage, done, total].
