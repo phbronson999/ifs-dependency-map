@@ -105,7 +105,9 @@ or the `.entity` it is generated from.
 
 Select a procedure or function in **Objects** and click **Trace** to follow what it
 does, in the order it runs: its calls, the tables and views it reads, its writes
-(INSERT / UPDATE / DELETE / MERGE) and the errors it raises, numbered top to bottom.
+(INSERT / UPDATE / DELETE / MERGE), the errors it raises, and its RETURNs (plus EXIT /
+CONTINUE in loops), numbered top to bottom. Steps after a RETURN on the branches you
+picked are dimmed: they don't run on that path.
 
 - At each **◆** branch (IF / ELSIF / ELSE, CASE, exception handlers) pick a branch to
   see inside it. An IF with no ELSE also offers "No ELSE: nothing runs". The trace goes
@@ -117,7 +119,7 @@ does, in the order it runs: its calls, the tables and views it reads, its writes
 - What runs in a loop sits in a shaded box and is marked **↻ in a loop**.
 - A call to a method with a Cust `@Override` goes to the override, since that's what
   runs. `$IF Component_X_SYS.INSTALLED` lines are skipped and the code inside them traced.
-- The **Steps** chips show or hide calls, reads, writes and errors.
+- The **Steps** chips show or hide calls, reads, writes, errors and returns.
 
 Trace reads the source files, so it works in the desktop app only. The CLI prints the
 same thing: `ifsdep --trace <file.plsql> <line>`.
@@ -174,7 +176,7 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 46 tests
+cargo test                                         # 47 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 cargo run --bin ifsdep -- --trace <file.plsql> <line>   # what Trace shows for the method on that line
 

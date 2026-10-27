@@ -15,8 +15,9 @@ use std::collections::HashMap;
 /// One thing a method does, in run order.
 #[derive(Debug, Clone, Default)]
 pub struct TraceStep {
-    /// `call`, `error` (`Error_SYS.X`, `RAISE`, `Raise_Application_Error`), `read`, `insert`,
-    /// `update`, `delete`, `merge`, `cursor`, `fork` or `loop`.
+    /// `call`, `error` (`Error_SYS.X`, `RAISE`, `Raise_Application_Error`), `return`, `exit`
+    /// (`EXIT` / `CONTINUE`, `name` says which), `read`, `insert`, `update`, `delete`,
+    /// `merge`, `cursor`, `fork` or `loop`.
     pub kind: &'static str,
     pub line: usize,
     /// Calls: the package, upper-cased (`INVENTORY_PART_API`). None for a call within the
@@ -248,6 +249,8 @@ pub fn trace_method(text: &str, line: usize) -> Option<MethodTrace> {
     let mut skip_error = false; // inside `$ERROR … $END`
     let mut skip_to = 0usize;
     let mut end_line = line;
+    // A RETURN / EXIT / CONTINUE, added at its `;` so the calls in it come first.
+    let mut leaving: Option<TraceStep> = None;
 
     let call_step = |package: Option<String>, method: String, line: usize| TraceStep {
         kind: "call",
@@ -304,6 +307,9 @@ pub fn trace_method(text: &str, line: usize) -> Option<MethodTrace> {
                 ";" => {
                     while let Some((p, m, l, _)) = pending.pop() {
                         sink(&mut fr).push(call_step(p, m, l));
+                    }
+                    if let Some(s) = leaving.take() {
+                        sink(&mut fr).push(s);
                     }
                     depth = 0;
                     from_lists.clear();
@@ -482,6 +488,17 @@ pub fn trace_method(text: &str, line: usize) -> Option<MethodTrace> {
             skip_to = i + 2;
         }
 
+        // Leaving the method (RETURN) or the loop (EXIT, CONTINUE); `EXIT WHEN x` leaves only when x.
+        if matches!(up, "RETURN" | "EXIT" | "CONTINUE") && was_start && i > main_begin {
+            let end = toks[i..].iter().find(|x| x.up == ";").map_or(t.end, |x| x.end);
+            leaving = Some(TraceStep {
+                kind: if up == "RETURN" { "return" } else { "exit" },
+                line: t.line,
+                name: t.up.clone(),
+                text: snippet(&src, t.start, end),
+                ..Default::default()
+            });
+        }
         // Errors raised. `Error_SYS.Record_General(...)` and the rest stop the method.
         if up == "RAISE" && was_start {
             let what = next.filter(|n| n.word).map(|n| n.text.clone()).unwrap_or_else(|| "RAISE".into());
@@ -720,6 +737,32 @@ END Do_It___;
         let arms: Vec<(&str, bool)> = fork.arms.iter().map(|a| (a.label.as_str(), a.implied)).collect();
         assert_eq!(arms, [("IF a_ THEN", false), ("No ELSE: nothing runs", true)]);
         assert_eq!(t.end_line, 7);
+    }
+
+    #[test]
+    fn returns_and_loop_exits_after_the_calls_in_them() {
+        let src = "FUNCTION F (a_ IN NUMBER) RETURN NUMBER IS\n\
+                   BEGIN\n\
+                   \x20  IF a_ IS NULL THEN\n\
+                   \x20     RETURN 0;\n\
+                   \x20  END IF;\n\
+                   \x20  FOR i_ IN 1..3 LOOP\n\
+                   \x20     EXIT WHEN A_API.Done(i_) = 1;\n\
+                   \x20     CONTINUE;\n\
+                   \x20  END LOOP;\n\
+                   \x20  RETURN B_API.Total(a_);\n\
+                   END F;\n";
+        let t = trace_method(src, 1).unwrap();
+        assert_eq!(
+            flat(&t.steps),
+            [
+                "[IF a_ IS NULL THEN]", "return RETURN", "[No ELSE: nothing runs]", "[end]",
+                "loop loop {", "A_API.Done", "exit EXIT", "exit CONTINUE", "}",
+                "B_API.Total", "return RETURN",
+            ]
+        );
+        // The declaration's `RETURN NUMBER` isn't a step; the text is the whole statement.
+        assert_eq!(t.steps.last().unwrap().text, "RETURN B_API.Total(a_);");
     }
 
     #[test]

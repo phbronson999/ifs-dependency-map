@@ -468,4 +468,7 @@ button.linkish:hover { color: var(--ink); text-decoration: underline; }
 .texp:hover circle { fill: var(--accent-soft); }
 .trow.is-handle { cursor: grab; }
 .canvas.dragging, .canvas.dragging .trow { cursor: grabbing; }
+.trow.origin-Flow rect.box { stroke: var(--accent); stroke-width: 1.8; }
+.trow.origin-Flow text.glyph { fill: var(--accent); font-weight: 600; }
+.trow.is-unreached { opacity: 0.4; }
 .tlinks path { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 6 4; }

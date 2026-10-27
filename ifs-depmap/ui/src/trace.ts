@@ -6,13 +6,14 @@
 // come from the app shell's `trace_method` (crates/ifsdep-core/src/trace.rs), one method at
 // a time, and calls are matched to objects through the index's `invokes` links.
 
-type TraceKind = "call" | "read" | "write" | "error";
+type TraceKind = "call" | "read" | "write" | "error" | "flow";
 
 const TRACE_KINDS: { key: TraceKind; label: string; hint: string }[] = [
   { key: "call", label: "calls", hint: "Calls to PL/SQL methods" },
   { key: "read", label: "reads", hint: "Tables and views read: SELECT, and the cursors opened" },
   { key: "write", label: "writes", hint: "INSERT, UPDATE, DELETE and MERGE" },
   { key: "error", label: "errors", hint: "Errors raised: Error_SYS, RAISE, Raise_Application_Error" },
+  { key: "flow", label: "returns", hint: "RETURN, and EXIT / CONTINUE in loops" },
 ];
 const WRITE_KINDS = new Set(["insert", "update", "delete", "merge"]);
 
@@ -36,7 +37,7 @@ const tr = {
   choice: new Map<string, number>(),
   /** Calls opened into the method they call, by path. */
   open: new Set<string>(),
-  kinds: new Set<TraceKind>(["call", "read", "write", "error"]),
+  kinds: new Set<TraceKind>(["call", "read", "write", "error", "flow"]),
   /** The rows last drawn, by key. */
   rows: new Map<string, TRow>(),
   /** Package name, upper-cased → the package's unit id. */
@@ -77,6 +78,8 @@ interface TRow {
   expanded: boolean;
   chosen: boolean;
   implied: boolean;
+  /** After a RETURN on the branches picked: doesn't run on this path. */
+  unreached: boolean;
   /** Calls: runs the Cust @Override of what the code names. */
   override: boolean;
   fork?: TraceStep;
@@ -184,6 +187,7 @@ function loadTrace(m: Model, id: string) {
 
 function traceKindOf(s: TraceStep): TraceKind | null {
   if (s.kind === "call" || s.kind === "error" || s.kind === "read") return s.kind;
+  if (s.kind === "return" || s.kind === "exit") return "flow";
   if (WRITE_KINDS.has(s.kind)) return "write";
   return null;
 }
@@ -200,7 +204,7 @@ function traceVisible(m: Model, from: Obj, s: TraceStep): boolean {
 
 /** "2 calls, 1 read" for a branch, not counting what the calls do. */
 function armSummary(m: Model, from: Obj, a: TraceArm) {
-  const n = { call: 0, read: 0, write: 0, error: 0 };
+  const n = { call: 0, read: 0, write: 0, error: 0, flow: 0 };
   const count = (steps: TraceStep[]) => {
     for (const s of steps) {
       if (!traceVisible(m, from, s)) continue;
@@ -223,11 +227,13 @@ function traceRows(m: Model, col: number, rootId: string) {
   const rows: TRow[] = [];
   const loops: { from: number; to: number; depth: number }[] = [];
   let num = 0;
+  // Rows added now come after a RETURN on the picked branches (set per step in `walk`).
+  let unreached = false;
   const root = m.object(rootId);
   const row = (r: Partial<TRow>): TRow => {
     const full: TRow = {
       key: "", col, owner: rootId, kind: "", depth: 0, label: "", sub: "", glyph: "", file: root.file, line: 0, text: "", loops: 0, num: 0,
-      obj: null, origin: "Core", path: "", expandable: false, expanded: false, chosen: false, implied: false, override: false, ...r,
+      obj: null, origin: "Core", path: "", expandable: false, expanded: false, chosen: false, implied: false, unreached, override: false, ...r,
     };
     rows.push(full);
     return full;
@@ -237,25 +243,30 @@ function traceRows(m: Model, col: number, rootId: string) {
     sub: fileName(m, root.file), file: root.file, line: root.line, obj: root.id, origin: m.file(root.file).root, path: `${col}`,
   });
 
-  interface Ctx { depth: number; path: string; from: Obj; loops: number; chain: Set<string> }
+  /**
+   * `ret.done`: a RETURN on the picked branches of this method has been passed. `dead`: the
+   * call into this method is itself after one.
+   */
+  interface Ctx { depth: number; path: string; from: Obj; loops: number; chain: Set<string>; dead: boolean; ret: { done: boolean } }
 
   /** A method's steps; true when the trace stops in them (a method still being read). */
-  const body = (id: string, c: Omit<Ctx, "from">): boolean => {
+  const body = (id: string, c: Omit<Ctx, "from" | "ret">): boolean => {
     const t = tr.cache.get(id);
     if (t === undefined || typeof t === "string") {
       if (t === undefined) loadTrace(m, id);
       const now = tr.cache.get(id);
-      if (now !== undefined && typeof now !== "string") return walk(now.steps, { ...c, from: m.object(id) });
+      if (now !== undefined && typeof now !== "string") return walk(now.steps, { ...c, from: m.object(id), ret: { done: false } });
       row({ key: `t:${c.path}~`, kind: "note", depth: c.depth, owner: id, label: typeof now === "string" ? now : "Reading the method…", glyph: "", file: m.object(id).file, line: m.object(id).line });
       return now === undefined;
     }
-    return walk(t.steps, { ...c, from: m.object(id) });
+    return walk(t.steps, { ...c, from: m.object(id), ret: { done: false } });
   };
 
   const walk = (steps: TraceStep[], c: Ctx): boolean => {
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i], p = `${c.path}/${i}`;
       if (!traceVisible(m, c.from, s)) continue;
+      unreached = c.dead || c.ret.done;
       const base: Partial<TRow> = { key: `t:${p}`, owner: c.from.id, depth: c.depth, loops: c.loops, file: s.file ?? c.from.file, line: s.line, text: s.text, path: p, kind: s.kind };
       if (s.kind === "call") {
         const target = traceTarget(m, c.from, s);
@@ -273,7 +284,11 @@ function traceRows(m: Model, col: number, rootId: string) {
           label: s.name.toLowerCase() === "super" ? `super → ${t ? `${pkg}.${t.name}` : "base method"}` : pkg ? `${pkg}.${s.name}` : s.name,
           sub: recursive ? `${where} · calls itself again` : where, expandable, expanded, override: !!target?.override,
         });
-        if (expanded && body(target!.id, { depth: c.depth + 1, path: `${p}>`, loops: c.loops, chain: new Set(c.chain).add(target!.id) })) return true;
+        if (expanded && body(target!.id, { depth: c.depth + 1, path: `${p}>`, loops: c.loops, chain: new Set(c.chain).add(target!.id), dead: unreached })) return true;
+      } else if (s.kind === "return" || s.kind === "exit") {
+        const what = s.name === "RETURN" ? "leaves the method" : s.name === "EXIT" ? "leaves the loop" : "goes to the loop's next pass";
+        row({ ...base, num: ++num, glyph: s.name, label: s.text, sub: s.text.includes(" WHEN ") ? `${what}, when the condition holds` : what, origin: "Flow" });
+        if (s.name === "RETURN") c.ret.done = true;
       } else if (s.kind === "error") {
         const label = s.package ? `Error_SYS.${s.name}` : s.name.toUpperCase() === "RAISE_APPLICATION_ERROR" ? "Raise_Application_Error" : s.name === "RAISE" ? "RAISE (the error again)" : `RAISE ${s.name}`;
         row({ ...base, num: ++num, glyph: "ERROR", label, sub: "raises an error", origin: "Error" });
@@ -314,7 +329,8 @@ function traceRows(m: Model, col: number, rootId: string) {
     return false;
   };
 
-  const stopped = body(root.id, { depth: 1, path: `${col}`, loops: 0, chain: new Set([root.id]) });
+  const stopped = body(root.id, { depth: 1, path: `${col}`, loops: 0, chain: new Set([root.id]), dead: false });
+  unreached = false;
   const t = tr.cache.get(root.id);
   if (!stopped && t && typeof t !== "string") {
     row({ key: `t:${col}$`, kind: "note", depth: 1, label: `End of ${root.name}`, glyph: "END", file: root.file, line: t.end_line, sub: "", origin: "Note" });
@@ -413,7 +429,7 @@ function renderTrace(fit: boolean) {
       rows.forEach((r, i) => {
         const h = height(r);
         const x = r.depth * T_INDENT, y = i * T_ROW;
-        let cls = `node trow k-${r.kind} origin-${r.origin}${r.key === sel ? " is-sel" : ""}${r.chosen ? " is-chosen" : ""}${r.implied ? " is-implied" : ""}`;
+        let cls = `node trow k-${r.kind} origin-${r.origin}${r.key === sel ? " is-sel" : ""}${r.chosen ? " is-chosen" : ""}${r.implied ? " is-implied" : ""}${r.unreached ? " is-unreached" : ""}`;
         // A button at the right: + / − opens a call in place; × closes a column started from a call.
         const closable = r.kind === "method" && c.col > 0;
       if (r.kind === "method") cls += " is-handle";
@@ -438,7 +454,7 @@ function renderTrace(fit: boolean) {
           }${button}`;
         }
         rowsSvg += `<g class="${cls}" data-node="${esc(r.key)}" transform="translate(${x},${y})">
-  <title>${esc(r.label)}${r.sub ? `\n${esc(r.sub)}` : ""}${r.text && r.text !== r.label ? `\n${esc(r.text)}` : ""}</title>
+  <title>${r.unreached ? "Not reached on the branches picked: a RETURN comes first\n" : ""}${esc(r.label)}${r.sub ? `\n${esc(r.sub)}` : ""}${r.text && r.text !== r.label ? `\n${esc(r.text)}` : ""}</title>
   <rect class="box" width="${W}" height="${h}" rx="${r.kind === "arm" ? 14 : 6}"/>${r.num ? `<text class="num" x="-8" y="${h / 2 + 4}" text-anchor="end">${r.num}</text>` : ""}${inner}</g>`;
       });
       out += `<g class="tcol" transform="translate(${ax},${ay})"><g class="tloops">${loopSvg}</g><g class="tlines">${lines}</g><g class="nodes">${rowsSvg}</g></g>`;
@@ -545,6 +561,7 @@ function traceDetailsHtml(m: Model, r: TRow) {
     r.num ? `<span>step ${r.num}</span>` : "",
     r.loops ? `<span class="pill prev">↻ in ${r.loops > 1 ? `${r.loops} loops` : "a loop"}</span>` : "",
     r.override ? `<span class="pill cust">your @Override</span>` : "",
+    r.unreached ? `<span class="pill prev">not reached on this path</span>` : "",
     r.col > 0 ? `<span>column ${r.col + 1}</span>` : "",
   ].join("");
   let body = "";
