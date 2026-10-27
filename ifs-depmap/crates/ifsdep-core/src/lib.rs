@@ -23,6 +23,7 @@ pub mod model;
 pub mod plsql;
 pub mod scan;
 pub mod sqlscope;
+pub mod stamp;
 pub mod trace;
 pub mod upgrade;
 

@@ -68,6 +68,16 @@ const ui = {
   roots: { core: null as string | null, cust: null as string | null, prev: null as string | null },
   busy: false,
   loadedFile: "",
+  /**
+   * The index saved on disk (desktop app). state: `checking` the folders for changes,
+   * `notice` (no changes; said for a few seconds), `refreshing` (changes: reindexing in the
+   * background), `stale` (changes, but the reindex was cancelled), `current`.
+   */
+  saved: null as null | {
+    savedAt: number; bytes: number; path: string;
+    state: "checking" | "notice" | "refreshing" | "stale" | "current";
+    changes: { changed: number; added: number; removed: number } | null;
+  },
 };
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
@@ -163,7 +173,7 @@ function boot() {
       if (saved) ui.roots = { core: saved.core ?? null, cust: saved.cust ?? null, prev: saved.prev ?? null };
     } catch { /* storage unavailable */ }
     renderRoots();
-    if (ui.roots.core || ui.roots.cust) reindex();
+    if (ui.roots.core || ui.roots.cust) startFromSaved();
     else renderEmpty();
   } else {
     renderRoots();
@@ -191,10 +201,76 @@ function setIndex(idx: GraphIndex) {
   renderAll(true);
 }
 
+/**
+ * A name for a node that survives reindexing (ids are positions, and shift): a file by kind
+ * and name, a declaration by its file, kind, section, name and which one of that name it is,
+ * a table or view by name; a component's id is already its name.
+ */
+function stableKey(m: Model, id: string): string {
+  if (/^u\d+$/.test(id)) { const u = m.unit(id); return `u|${u.kind}|${u.name}`; }
+  if (/^o\d+$/.test(id)) {
+    const o = m.object(id);
+    const same = (m.objectsByUnit.get(o.unit) ?? []).filter((x) => x.kind === o.kind && x.name === o.name && x.section === o.section);
+    return `o|${stableKey(m, o.unit)}|${o.kind}|${o.section}|${o.name}|${same.indexOf(o)}`;
+  }
+  if (/^r\d+$/.test(id)) return `r|${m.relation(id).name}`;
+  return `c|${id}`;
+}
+
+/** Swaps in a new index of the same folders, keeping what's shown and selected where it still exists. */
+function swapIndex(idx: GraphIndex) {
+  const old = ui.model!;
+  const key = (id: string) => stableKey(old, id);
+  const sel = ui.selected;
+  const before = {
+    components: [...ui.components],
+    focus: [...ui.focus].map(key),
+    objUnits: [...ui.objUnits].map(key),
+    selected: sel?.type === "finding"
+      ? (() => { const f = old.idx.findings.find((x) => x.id === sel.id); return f ? `f|${f.rule}|${f.title}` : null; })()
+      : sel && !sel.id.startsWith("t:") ? key(sel.id) : sel?.id ?? null,
+    root: tr.root ? key(tr.root) : null,
+    side: tr.side.map((s) => ({ ...s, id: key(s.id) })),
+  };
+  ui.model = new Model(idx);
+  applyScope();
+  const m = ui.model;
+  const ids = new Map<string, string>();
+  for (const u of idx.units) ids.set(stableKey(m, u.id), u.id);
+  for (const o of idx.objects) ids.set(stableKey(m, o.id), o.id);
+  for (const r of idx.relations) ids.set(stableKey(m, r.id), r.id);
+  const back = (k: string) => (k.startsWith("c|") ? (idx.components.some((c) => c.name === k.slice(2)) ? k.slice(2) : undefined) : ids.get(k));
+  const keep = (list: string[]) => new Set(list.map(back).filter((x): x is string => !!x));
+  ui.components = new Set(before.components.filter((c) => idx.components.some((x) => x.name === c)));
+  ui.focus = keep(before.focus);
+  ui.objUnits = keep(before.objUnits);
+  ui.selected = null;
+  const s = before.selected;
+  if (s?.startsWith("f|")) {
+    const f = idx.findings.find((x) => `f|${x.rule}|${x.title}` === s);
+    if (f) ui.selected = { type: "finding", id: f.id };
+  } else if (s?.startsWith("t:")) ui.selected = { type: "node", id: s };
+  else if (s) { const id = back(s); if (id) ui.selected = { type: "node", id }; }
+  // The trace: the same methods (their steps are read again), the same branches picked.
+  const root = before.root ? back(before.root) : undefined;
+  const choice = new Map(tr.choice), open = new Set(tr.open), offsets = new Map(tr.offsets);
+  traceReset();
+  if (root) {
+    tr.root = root;
+    tr.side = before.side.map((x) => ({ ...x, id: back(x.id) ?? "" })).filter((x) => x.id);
+    tr.choice = choice;
+    tr.open = open;
+    tr.offsets = offsets;
+  } else if (ui.level === "trace") ui.level = "objects";
+  renderRoots();
+  renderAll();
+}
+
 /** Where the bar is after each stage, when there's no earlier run of these folders to go by. */
 const STAGE_AT: Record<string, number> = {
   "Grouping files": 0.62, "Collecting declarations": 0.65, "Linking files": 0.7, "Linking declarations": 0.75,
   "Reading components": 0.85, "Checking rules": 0.88, "Checking datatypes": 0.93, "Comparing with previous Core": 0.96,
+  "Saving the index": 0.98,
 };
 
 /** What indexing is doing, from the indexer's `index-progress` events. */
@@ -210,10 +286,39 @@ function lastIndexKey() {
   return `ifsdepmap.took:${ui.roots.core ?? ""}|${ui.roots.cust ?? ""}|${ui.roots.prev ?? ""}`;
 }
 
+/** "today 21:40", "yesterday 08:05" or the date and time. */
+function savedWhen(ms: number) {
+  const d = new Date(ms), now = new Date();
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(now) - day(d)) / 86_400_000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${days === 0 ? "today" : days === 1 ? "yesterday" : d.toLocaleDateString()} ${time}`;
+}
+
+function changesText(c: { changed: number; added: number; removed: number }) {
+  const parts: [number, string][] = ([[c.changed, "changed"], [c.added, "added"], [c.removed, "removed"]] as [number, string][]).filter(([k]) => k > 0);
+  const n = c.changed + c.added + c.removed;
+  // "3 files changed", "1 file added", "5 files changed (3 changed, 2 added)".
+  return `${n.toLocaleString()} file${n === 1 ? "" : "s"} ${parts.length === 1 ? parts[0][1] : `changed (${parts.map(([k, w]) => `${k.toLocaleString()} ${w}`).join(", ")})`}`;
+}
+
 function renderProgress() {
   const bar = $("progress");
+  const s = ui.saved;
+  // While the saved index is on screen and not known to match the folders, say so.
+  const savedNote = s && s.state !== "current"
+    ? `Showing the index saved ${savedWhen(s.savedAt)} · ${
+        s.state === "checking" ? "checking the folders for changed files…"
+        : s.state === "notice" ? "no files changed since"
+        : s.state === "stale" ? `${changesText(s.changes!)} since; press Index to update it`
+        : `${changesText(s.changes!)} since · reindexing`
+      }`
+    : "";
+  bar.classList.toggle("waiting", !ui.busy && s?.state === "checking");
   if (!ui.busy) {
-    bar.hidden = true;
+    bar.hidden = !savedNote;
+    $("progress-label").textContent = savedNote;
+    (bar.firstElementChild as HTMLElement).style.width = "0";
     return;
   }
   const elapsed = performance.now() - progress.started;
@@ -227,9 +332,52 @@ function renderProgress() {
   else fraction = STAGE_AT[stage] ?? 0.02;
   const counts = total ? ` ${done.toLocaleString()} / ${total.toLocaleString()}` : "";
   const left = last && elapsed < last ? ` · about ${clock(last - elapsed)} left` : "";
-  $("progress-label").textContent = `${stage}${counts} · ${clock(elapsed)}${left}`;
+  $("progress-label").textContent = `${savedNote ? `${savedNote}: ` : ""}${stage}${counts} · ${clock(elapsed)}${left}`;
   bar.hidden = false;
   (bar.firstElementChild as HTMLElement).style.width = `${(fraction * 100).toFixed(1)}%`;
+}
+
+/**
+ * At launch: shows the index saved for these folders straight away, then checks the folders
+ * and reindexes in the background if any file changed. Without one, indexes as before.
+ */
+async function startFromSaved() {
+  if (!invoke) return;
+  let saved: { saved: { saved_at: number; bytes: number; path: string }; index: GraphIndex } | null = null;
+  try {
+    const json: string | null = await invoke("load_saved", { core: ui.roots.core, cust: ui.roots.cust, prevCore: ui.roots.prev });
+    if (json) saved = JSON.parse(json);
+  } catch { /* unreadable: index instead */ }
+  if (!saved) { reindex(); return; }
+  ui.saved = { savedAt: saved.saved.saved_at, bytes: saved.saved.bytes, path: saved.saved.path, state: "checking", changes: null };
+  setIndex(saved.index);
+  renderProgress();
+  try {
+    const c = JSON.parse(await invoke("check_saved", { core: ui.roots.core, cust: ui.roots.cust, prevCore: ui.roots.prev }));
+    ui.saved.changes = c;
+    if (c.changed + c.added + c.removed === 0) {
+      ui.saved.state = "notice";
+      window.setTimeout(() => { if (ui.saved?.state === "notice") { ui.saved.state = "current"; renderProgress(); renderDetails(); } }, 8000);
+    } else {
+      ui.saved.state = "refreshing";
+      reindex();
+    }
+  } catch {
+    ui.saved.state = "current";
+  }
+  renderProgress();
+  renderDetails();
+}
+
+/** The saved index's details, after indexing saved a new one. */
+async function refreshSavedInfo() {
+  try {
+    const json: string | null = await invoke!("saved_info");
+    const s = json ? JSON.parse(json) : null;
+    ui.saved = s ? { savedAt: s.saved_at, bytes: s.bytes, path: s.path, state: "current", changes: null } : null;
+  } catch { ui.saved = null; }
+  renderProgress();
+  renderDetails();
 }
 
 async function reindex() {
@@ -242,10 +390,16 @@ async function reindex() {
   try {
     const json: string = await invoke("index_folders", { core: ui.roots.core, cust: ui.roots.cust, prevCore: ui.roots.prev });
     try { localStorage.setItem(lastIndexKey(), String(Math.round(performance.now() - progress.started))); } catch { /* storage unavailable */ }
-    setIndex(JSON.parse(json));
+    const idx: GraphIndex = JSON.parse(json);
+    // Same folders as what's on screen: swap it in and keep the view; otherwise start over.
+    const m = ui.model;
+    if (m && m.idx.core_root === idx.core_root && m.idx.cust_root === idx.cust_root) swapIndex(idx);
+    else setIndex(idx);
+    await refreshSavedInfo();
   } catch (e) {
     // Cancelled: keep what was loaded before, if anything.
     toast(String(e) === "cancelled" ? "Indexing cancelled" : `Indexing failed: ${e}`);
+    if (ui.saved?.state === "refreshing") ui.saved.state = "stale";
   } finally {
     ui.busy = false;
     window.clearInterval(progress.timer);
@@ -889,9 +1043,25 @@ function overviewHtml(m: Model) {
 ${findingsSection}
 <section><h4>Indexed</h4><dl class="kv"><dt>files</dt><dd>${s.files.toLocaleString()}</dd><dt>units</dt><dd>${s.units.toLocaleString()}</dd><dt>objects</dt><dd>${s.objects.toLocaleString()}</dd><dt>links</dt><dd>${s.edges.toLocaleString()}</dd><dt>took</dt><dd>${(s.millis / 1000).toFixed(1)} s</dd></dl>
 <h4>Files by type</h4><dl class="kv">${kinds}</dl></section>
+${savedHtml()}
 ${m.idx.core_root || m.idx.cust_root ? `<section><h4>Folders</h4><dl class="kv"><dt>Core</dt><dd class="mono">${esc(m.idx.core_root ?? "—")}</dd><dt>Cust</dt><dd class="mono">${esc(m.idx.cust_root ?? "—")}</dd></dl></section>` : ""}
 ${m.idx.notes.length ? `<section><h4>Notes</h4>${m.idx.notes.slice(0, 20).map((n) => `<p class="mono">${esc(n)}</p>`).join("")}</section>` : ""}
 </div>`;
+}
+
+/** Overview: the index saved on disk, how it compares with the folders, and where it is. */
+function savedHtml() {
+  const s = ui.saved;
+  if (!invoke || !s) return "";
+  const size = s.bytes >= 1e9 ? `${(s.bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(s.bytes / 1e6))} MB`;
+  const status = s.state === "checking" ? "Checking the folders for changed files…"
+    : s.state === "refreshing" ? `${changesText(s.changes!)} since it was saved; reindexing in the background. You're looking at the saved index until it's done.`
+    : s.state === "stale" ? `${changesText(s.changes!)} since it was saved, so what you see is older than the folders. Press Index to update it.`
+    : s.changes ? "Matches the folders: no files changed since it was saved."
+    : "Saved when these folders were last indexed.";
+  return `<section><h4>Saved index</h4><p>${esc(status)}</p><dl class="kv"><dt>saved</dt><dd>${esc(savedWhen(s.savedAt))}</dd><dt>size</dt><dd>${size}</dd></dl>
+<p class="mono saved-path" title="${esc(s.path)}">${esc(s.path)}</p><div class="row-actions"><button class="btn small" data-action="reveal-saved" title="Show the saved index in Explorer">Open folder</button></div>
+<p class="muted">The next launch shows it straight away, then checks each file's size and modified time and reindexes only if something changed.</p></section>`;
 }
 
 /** The chains of source lines behind a finding, in order, each line openable. */
@@ -1442,6 +1612,7 @@ function bindEvents() {
       else if (a === "drill") drill(act.dataset.node!);
       else if (a === "finding") selectFinding(act.dataset.f!);
       else if (a === "trace") startTrace(act.dataset.node!);
+      else if (a === "reveal-saved") invoke?.("reveal_saved").catch((e: unknown) => toast(`Couldn't open the folder: ${e}`));
       else if (a === "trace-open") traceToggle(act.dataset.path!);
       else if (a === "trace-side") traceSide(act.dataset.key!);
       else if (a === "trace-close") traceCloseSide(Number(act.dataset.col));

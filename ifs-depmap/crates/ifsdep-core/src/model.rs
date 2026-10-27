@@ -339,6 +339,9 @@ pub struct Index {
     pub findings: Vec<Finding>,
     pub stats: Stats,
     pub notes: Vec<String>,
+    /// The size and modified time of every file read (not written to the JSON), saved with
+    /// the index to tell later which files changed.
+    pub stamps: Vec<crate::stamp::Stamp>,
 }
 
 /// `u12` → 12, `o40` → 40, `r3` → 3.

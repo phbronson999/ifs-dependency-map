@@ -7,6 +7,9 @@ pub struct Scanned {
     pub kind: FileKind,
     /// First folder under the root, upper-cased (`shpord/...` → `SHPORD`).
     pub path_component: Option<String>,
+    pub size: u64,
+    /// Modified time, milliseconds since 1970.
+    pub modified: u64,
 }
 
 /// Walks one root (without following symlinks) and returns every file type
@@ -37,6 +40,7 @@ pub fn scan_root(root: &Path) -> (Vec<Scanned>, Vec<String>) {
                 continue;
             }
             let Some(kind) = FileKind::from_path(&path) else { continue };
+            let (size, modified) = entry.metadata().map(|m| crate::stamp::of(&m)).unwrap_or((0, 0));
             let rel_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             let path_component = if rel_path.components().count() > 1 {
                 rel_path
@@ -52,6 +56,8 @@ pub fn scan_root(root: &Path) -> (Vec<Scanned>, Vec<String>) {
                 abs: path,
                 kind,
                 path_component,
+                size,
+                modified,
             });
         }
     }

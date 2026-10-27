@@ -124,6 +124,16 @@ picked are dimmed: they don't run on that path.
 Trace reads the source files, so it works in the desktop app only. The CLI prints the
 same thing: `ifsdep --trace <file.plsql> <line>`.
 
+## Saved index
+
+The desktop app saves each index in its own data folder
+(`%APPDATA%\dev.bronson.ifsdepmap`, never in the folders it reads). The next launch shows
+it straight away, then checks every file's size and modified time: if nothing changed
+that's it; if something did, it reindexes in the background while you keep working on the
+saved one, and the strip under the header says which you're looking at. **Overview** shows
+when it was saved, its size, and **Open folder**. An index saved by another version of the
+app isn't reused.
+
 ## Upgrades
 
 Set **previous Core** (the third folder in the app, or `--prev-core`) to an older Core
@@ -151,6 +161,7 @@ ifs-depmap/
     src/analyze.rs      the rules above
     src/upgrade.rs      comparison with a previous Core
     src/trace.rs        one method's steps in run order, by branch (Trace view)
+    src/stamp.rs        each file's size and modified time, saved with the index
     src/bin/ifsdep.rs   CLI
     tests/fixtures.rs   end-to-end tests
   fixtures/core, fixtures/cust   sample folders with every problem planted
@@ -176,7 +187,7 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 48 tests
+cargo test                                         # 49 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 cargo run --bin ifsdep -- --trace <file.plsql> <line>   # what Trace shows for the method on that line
 

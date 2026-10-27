@@ -105,6 +105,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
         let (files, notes) = scan::scan_root(root);
         idx.notes.extend(notes);
         let (total, stage) = (files.len(), format!("Reading {layer:?} files"));
+        idx.stamps.extend(files.iter().map(|s| crate::stamp::Stamp { path: s.abs.display().to_string(), size: s.size, modified: s.modified }));
         for (n, s) in files.into_iter().enumerate() {
             check()?;
             if n % 250 == 0 || n + 1 == total {
