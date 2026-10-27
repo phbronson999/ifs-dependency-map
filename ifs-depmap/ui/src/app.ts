@@ -1183,6 +1183,24 @@ function bindResizers() {
 
 function bindEvents() {
   bindResizers();
+  // The color picker closes when its swatch is clicked again. The click that closes the native
+  // popup reaches the swatch and would open it again: swallow that one click. Any other way of
+  // closing it (picking, Esc, clicking elsewhere) resets the state.
+  let pickerOpen = false, swallow = false;
+  const isPicker = (t: EventTarget | null) => (t as HTMLElement | null)?.id === "sel-color";
+  document.addEventListener("pointerdown", (ev) => { if (isPicker(ev.target) && pickerOpen) swallow = true; }, true);
+  document.addEventListener("click", (ev) => {
+    if (!isPicker(ev.target)) return;
+    if (swallow) {
+      ev.preventDefault();
+      swallow = pickerOpen = false;
+      (ev.target as HTMLInputElement).blur();
+      return;
+    }
+    pickerOpen = true;
+  }, true);
+  document.addEventListener("focusout", (ev) => { if (isPicker(ev.target)) pickerOpen = swallow = false; }, true);
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") pickerOpen = swallow = false; }, true);
   // Selection color and brightness: applied live, remembered.
   document.addEventListener("input", (ev) => {
     const t = ev.target as HTMLInputElement;
