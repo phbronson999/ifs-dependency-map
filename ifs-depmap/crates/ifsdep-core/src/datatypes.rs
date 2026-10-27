@@ -189,6 +189,8 @@ struct Resolver<'a> {
     packages: HashMap<String, usize>,
     /// (unit, method upper) → objects.
     methods: HashMap<(usize, String), Vec<usize>>,
+    /// (unit, name upper) → the generated method (Get, Get_<Attr>, Get_<Attr>_Db).
+    generated_methods: HashMap<(usize, String), usize>,
     lines: RefCell<HashMap<usize, Vec<String>>>,
     /// Guards against cycles (a view reading itself, mutually recursive functions).
     visiting: RefCell<HashSet<String>>,
@@ -256,6 +258,12 @@ impl<'a> Resolver<'a> {
                 methods.entry((id_index(&o.unit), o.name.to_ascii_uppercase())).or_default().push(oi);
             }
         }
+        let mut generated_methods = HashMap::new();
+        for (oi, o) in idx.objects.iter().enumerate() {
+            if o.generated {
+                generated_methods.entry((id_index(&o.unit), o.name.to_ascii_uppercase())).or_insert(oi);
+            }
+        }
         Resolver {
             idx,
             lus,
@@ -268,6 +276,7 @@ impl<'a> Resolver<'a> {
             tables,
             packages,
             methods,
+            generated_methods,
             lines: RefCell::default(),
             visiting: RefCell::default(),
             depth: RefCell::default(),
@@ -282,6 +291,12 @@ impl<'a> Resolver<'a> {
                 .unwrap_or_default()
         });
         line.checked_sub(1).and_then(|i| lines.get(i)).cloned().unwrap_or_default()
+    }
+
+    /// The generated method `name` of package `pkg`.
+    fn generated_method(&self, pkg: &str, name: &str) -> Option<&'a Object> {
+        let &u = self.packages.get(&pkg.to_ascii_uppercase())?;
+        self.generated_methods.get(&(u, name.to_ascii_uppercase())).map(|&oi| &self.idx.objects[oi])
     }
 
     fn file_lines(&self, file: usize) -> Vec<String> {
@@ -774,14 +789,20 @@ fn places(idx: &Index, r: &Resolver, callers: &HashMap<&str, Vec<&Edge>>, target
     // 1. Projections, fragments and clients.
     let names: Vec<String> = targets.iter().map(|t| t.attr.name.clone()).collect();
     let getters: Vec<String> = targets.iter().map(|t| format!("{}.{}(", pkg(t), getter(t)).to_ascii_lowercase()).collect();
+    // A file is read closely only when one of its words is an attribute name or a getter's
+    // name (`Get_X`, any case): one pass over its words, instead of a search per name.
+    let name_set: HashSet<&str> = names.iter().map(String::as_str).collect();
+    let getter_set: HashSet<String> = targets.iter().map(|t| getter(t).to_ascii_lowercase()).collect();
     for (fi, file) in idx.files.iter().enumerate() {
         if !file.kind.is_marble() {
             continue;
         }
         let Ok(bytes) = std::fs::read(&file.abs_path) else { continue };
         let text = String::from_utf8_lossy(&bytes);
-        let lower = text.to_ascii_lowercase();
-        if !names.iter().any(|n| text.contains(n.as_str())) && !getters.iter().any(|g| lower.contains(g.as_str())) {
+        let mentions = text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| {
+            name_set.contains(w) || (w.len() > 4 && w[..4].eq_ignore_ascii_case("get_") && getter_set.contains(&w.to_ascii_lowercase()))
+        });
+        if !mentions {
             continue;
         }
         let mut depth = 0;
@@ -841,10 +862,14 @@ fn places(idx: &Index, r: &Resolver, callers: &HashMap<&str, Vec<&Edge>>, target
     }
 
     // 2. Code that receives the value as the declared type.
-    let gen = |t: &Target, name: &str| -> Option<&Object> {
-        let p = pkg(t);
-        idx.objects.iter().find(|o| o.generated && o.name.eq_ignore_ascii_case(name) && idx.units[id_index(&o.unit)].name.eq_ignore_ascii_case(&p))
-    };
+    let gen = |t: &Target, name: &str| r.generated_method(&pkg(t), name);
+    // Who reads each relation, and relations by name, looked up per target below.
+    let mut readers: HashMap<&str, HashSet<usize>> = HashMap::new();
+    for e in idx.edges.iter().filter(|e| e.kind == EdgeKind::Reads) {
+        readers.entry(e.to.as_str()).or_default().insert(e.file);
+    }
+    let rel_by_name: HashMap<&str, &str> = idx.relations.iter().map(|x| (x.name.as_str(), x.id.as_str())).collect();
+    let no_files = HashSet::new();
     for (ti, t) in targets.iter().enumerate() {
         let declared = t.attr.datatype.clone().unwrap_or_default();
         if let Some(g) = gen(t, &getter(t)) {
@@ -881,10 +906,9 @@ fn places(idx: &Index, r: &Resolver, callers: &HashMap<&str, Vec<&Edge>>, target
         // SQL that reads the column from the LU's view: unprefixed, or with that view's alias,
         // in a query whose FROM has the view.
         if let Some(view) = r.lu_view.get(&t.lu.to_ascii_uppercase()).cloned() {
-            let vid = idx.relations.iter().find(|x| x.name == view).map(|x| x.id.clone());
-            let files: HashSet<usize> = idx.edges.iter().filter(|e| e.kind == EdgeKind::Reads && Some(&e.to) == vid.as_ref()).map(|e| e.file).collect();
+            let files = rel_by_name.get(view.as_str()).and_then(|id| readers.get(id)).unwrap_or(&no_files);
             let col = column(t);
-            for f in files {
+            for &f in files {
                 if !matches!(idx.files[f].kind, FileKind::Plsql | FileKind::Plsvc | FileKind::Views) {
                     continue;
                 }
@@ -995,9 +1019,7 @@ fn finding(
     };
     // The generated methods that fill it.
     let pkg = plsql::package_name(lu);
-    let gen = |name: &str| {
-        idx.objects.iter().find(|o| o.generated && o.name.eq_ignore_ascii_case(name) && idx.units[id_index(&o.unit)].name.eq_ignore_ascii_case(&pkg))
-    };
+    let gen = |name: &str| r.generated_method(&pkg, name);
     let in_get = a.public && !a.exclude_get;
     let get = if in_get { gen("Get") } else { None };
     let getter = if in_get { gen(&format!("Get_{}", plsql::snake_name(&a.name))) } else { None };

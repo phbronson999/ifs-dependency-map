@@ -283,6 +283,13 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
                 by_lu.entry(lu.to_ascii_uppercase()).or_default().push(fi);
             }
         }
+        // What each package declares itself, collected once (one pass over every object per LU
+        // took most of this stage on a full Core).
+        let mut declared_in: HashMap<String, HashSet<String>> = HashMap::new();
+        for o in &idx.objects {
+            declared_in.entry(o.unit.clone()).or_default().insert(o.name.to_ascii_uppercase());
+        }
+        let none = HashSet::new();
         for files in by_lu.values_mut() {
             // Core first: its attributes come before the Cust ones.
             files.sort_by_key(|&f| idx.files[f].root != Layer::Core);
@@ -290,8 +297,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
             let (lu, lu_line) = base.name.clone().expect("grouped by name");
             let Some(&pu) = unit_map.get(&(UnitKind::Package, plsql::package_name(&lu).to_ascii_uppercase())) else { continue };
             let unit_id = idx.units[pu].id.clone();
-            let declared: HashSet<String> =
-                idx.objects.iter().filter(|o| o.unit == unit_id).map(|o| o.name.to_ascii_uppercase()).collect();
+            let declared = declared_in.get(&unit_id).unwrap_or(&none);
             let mut made: HashSet<String> = HashSet::new();
             // A per-attribute getter exists next to a hand-written method of the same name: they
             // are overloads (the getter takes the LU's keys), e.g. Customer_Order_API's
