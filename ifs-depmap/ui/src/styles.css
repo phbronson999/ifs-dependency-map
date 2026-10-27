@@ -430,3 +430,8 @@ marker.m-sel path { fill: var(--accent); }
 .selctl input[type="range"] { width: 84px; accent-color: var(--sel, #f5a524); }
 .details-filter { display: flex; gap: 6px; margin: 2px 0 8px; }
 p.muted { color: var(--muted); font-size: 12.5px; }
+/* A run of hidden Core steps under "How this was found". */
+.step.fold::before { content: "…"; }
+.step.fold { padding-bottom: 8px; }
+button.linkish { background: none; border: 0; padding: 0; color: var(--muted); font: 12px var(--font-body); cursor: pointer; text-align: left; }
+button.linkish:hover { color: var(--ink); text-decoration: underline; }

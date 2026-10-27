@@ -45,6 +45,8 @@ const ui = {
   get depth(): Depth { return this.depthByLevel[this.level]; },
   /** Draw only what Cust touches (declared in Cust files, or overridden / used by Cust code). */
   custOnly: false,
+  /** Fold the Core steps under a finding's "How this was found". */
+  stepsHideCore: false,
   /** Hide Core-only findings in the details panel (when the Findings list shows them). */
   detailsHideCore: false,
   /** The selected node's color, and how strongly it glows and fills (10–100). */
@@ -128,6 +130,7 @@ function boot() {
     }
     ui.custOnly = localStorage.getItem("ifsdepmap.custOnly") === "true";
     ui.detailsHideCore = localStorage.getItem("ifsdepmap.detailsHideCore") === "true";
+    ui.stepsHideCore = localStorage.getItem("ifsdepmap.stepsHideCore") === "true";
     ui.selColor = /^#[0-9a-f]{6}$/i.test(localStorage.getItem("ifsdepmap.selColor") ?? "") ? localStorage.getItem("ifsdepmap.selColor")! : ui.selColor;
     const strength = Number(localStorage.getItem("ifsdepmap.selStrength"));
     if (strength >= 10 && strength <= 100) ui.selStrength = strength;
@@ -827,10 +830,36 @@ function evidenceHtml(f: Finding) {
 <div class="step-head">${pill}<span class="p" title="${esc(file.rel_path)}">${esc(name)}</span><button class="btn small" data-action="open" data-file="${s.file}" data-line="${s.line}">${invoke ? "Open" : "Copy"}</button></div>
 <code>${esc(s.text)}</code>${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}</li>`;
   };
+  // Hiding Core steps folds each run of consecutive ones into one line that keeps the numbering.
+  const isCore = (s: Step) => m.file(s.file).root === "Core";
+  const fold = (run: Step[], first: number) => {
+    const files = [...new Set(run.map((s) => `${m.file(s.file).component.toLowerCase()} · ${m.file(s.file).rel_path.split("/").pop()}`))];
+    const which = run.length === 1 ? `Step ${first}` : `Steps ${first}–${first + run.length - 1}`;
+    return `<li class="step fold" style="counter-increment: step ${run.length}"><button class="linkish" data-steps-core title="Show the Core steps">${which}: ${run.length} Core step${run.length === 1 ? "" : "s"} hidden (${esc(files.join(", "))})</button></li>`;
+  };
+  const stepsOf = (steps: Step[]) => {
+    if (!ui.stepsHideCore) return steps.map(step).join("");
+    let out = "", run: Step[] = [], start = 1;
+    steps.forEach((s, i) => {
+      if (isCore(s)) {
+        if (!run.length) start = i + 1;
+        run.push(s);
+        return;
+      }
+      if (run.length) { out += fold(run, start); run = []; }
+      out += step(s);
+    });
+    if (run.length) out += fold(run, start);
+    return out;
+  };
+  const coreSteps = f.evidence.reduce((n, t) => n + t.steps.filter(isCore).length, 0);
+  const toggle = coreSteps
+    ? `<div class="details-filter"><button class="sev-chip scope" data-steps-core aria-pressed="${!ui.stepsHideCore}" title="Show or hide the steps in Core files"><span class="pill core">Core</span>steps <b>${coreSteps}</b></button></div>`
+    : "";
   const trails = f.evidence
-    .map((t) => `<div class="trail"><div class="trail-title">${esc(t.title)}</div><ol>${t.steps.map(step).join("")}</ol></div>`)
+    .map((t) => `<div class="trail"><div class="trail-title">${esc(t.title)}</div><ol>${stepsOf(t.steps)}</ol></div>`)
     .join("");
-  return `<section><h4>How this was found</h4>${trails}</section>`;
+  return `<section><h4>How this was found</h4>${toggle}${trails}</section>`;
 }
 
 /** Upgrade findings: the Core declaration before and now, as a diff with both line numbers. */
@@ -1262,6 +1291,12 @@ function bindEvents() {
     }
     const jump = t.closest<HTMLElement>("[data-jump]");
     if (jump) { jumpTo(jump.dataset.jump!); return; }
+    if (t.closest("[data-steps-core]")) {
+      ui.stepsHideCore = !ui.stepsHideCore;
+      try { localStorage.setItem("ifsdepmap.stepsHideCore", String(ui.stepsHideCore)); } catch { /* storage unavailable */ }
+      renderDetails();
+      return;
+    }
     if (t.closest("[data-details-core]")) {
       ui.detailsHideCore = !ui.detailsHideCore;
       try { localStorage.setItem("ifsdepmap.detailsHideCore", String(ui.detailsHideCore)); } catch { /* storage unavailable */ }
