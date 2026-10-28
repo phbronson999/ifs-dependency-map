@@ -1,6 +1,6 @@
 {
   "name": "ifs-depmap",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Visualize and check dependencies across IFS Cloud Core and Cust layers",
   "scripts": {
