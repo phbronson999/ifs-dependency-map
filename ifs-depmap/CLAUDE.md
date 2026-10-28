@@ -30,7 +30,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - `src-tauri/` Tauri 2 shell: `pick_folder`, `index_folders`, `open_in_editor` (`code -g`)
 
 ## Commands
-- `cargo test` (59 tests, must stay green)
+- `cargo test` (60 tests, must stay green)
 - `cargo run --release --bin ifsdep -- --core <dir> --cust <dir> --json out.json [--strict]`
 - `ifsdep-ai init --core <dir> --cust <dir> [--workspace <dir>]`, then `ifsdep-ai find|callers|callees|impact|unit|trace <name>`,
   `ifsdep-ai findings`, `ifsdep-ai status`

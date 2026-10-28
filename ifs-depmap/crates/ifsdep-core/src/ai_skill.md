@@ -38,14 +38,34 @@ or a single name: a unit (`Customer_Order_API`, `ShopOrderHandling`), an object 
 or a table or view (`CUSTOMER_ORDER_TAB`). Case doesn't matter. If nothing matches exactly,
 the answer lists names that contain it. `--limit N` raises the line cap.
 
+## Use these, not grep, for how code connects
+
+Grep is about as fast, but it finds text: a name search mixes calls to the method you mean
+with same-named methods in other packages, comments and the definition. It also can't see
+methods IFS generates from `.entity` files (`Get_<Attr>`, `Get_<Attr>_Db`). These queries
+resolve each name to one declaration, through Core and Cust layers, overrides, includes,
+client → projection → `.plsvc`, and generated methods.
+
+Use grep, or read the file, for:
+- text inside code: message strings, comments, column names in SQL;
+- `.enumeration`, `.utility`, `.upg` and most of `.entity`, which the index doesn't read;
+- state machine events: a client's `call Release()` on an entity's state event has no link yet,
+  so don't conclude from `callers` that nothing triggers an event;
+- anything changed since the index was written (`status`).
+
 ## How to work
 
-1. Before changing a method, run `find` and `trace` on it. Then run `impact` to see what else to check.
-2. Before adding a Cust override, run `find` on the base: it may already be overridden.
-3. When a file is under discussion, `findings --file <name>` shows the problems already found there.
-4. The index is a snapshot. If `status` says files changed, line numbers may be off, so read the file itself.
+1. Before changing a method, run `find` and `trace` on it. Then run `callers` to find every path
+   that reaches it, and `impact` to see what else to check. A check placed in one caller misses
+   the others.
+2. To follow a client command to the database, run `callees <Client>.<Command> --depth 3`.
+3. Before adding a Cust override, run `find` on the base: it may already be overridden.
+4. When a file is under discussion, `findings --file <name>` shows the problems already found there.
+5. The index is a snapshot. If `status` says files changed, line numbers may be off, so read the file itself.
    The user refreshes the index by running `ifsdep-ai init` again. Don't rebuild it on your own.
-5. The index says where things are. Read the actual file before you make claims about the code.
+6. The index says where things are. Read the actual file before you make claims about the code
+   or change it. If an answer and the file disagree, the file is right; tell the user, since
+   that's an index error worth reporting.
 
 ## IFS rules the index follows
 
@@ -62,6 +82,7 @@ the answer lists names that contain it. `--limit N` raises the line cap.
   source file, and `find` points at the entity instead.
 - A projection action `DoIt` is taken to be implemented by the `.plsvc` method `Do_It___`.
   This is assumed, not yet checked, so confirm it in the `.plsvc` file.
-- deploy.ini `[Connections]` lists the components a component depends on. A dependency guarded
+- deploy.ini `[Connections]` lists the components a component depends on. Components reached
+  through a chain of STATIC connections are always installed with it, so they count too. A dependency guarded
   with `@DynamicComponentDependency` or `$IF Component_X_SYS.INSTALLED` exists only when that
   component is installed.

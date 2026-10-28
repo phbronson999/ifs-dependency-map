@@ -194,6 +194,74 @@ underscores (`CustomerOrder` finds `Customer_Order_API`). Every answer gives ful
 `path:line` locations. The index is looked for in `--index`, then `IFSDEP_INDEX`, then
 in the current folder and the folders above it.
 
+### When it beats grep, and when it doesn't
+
+Measured on a 25R1 Core and Cust (103,737 files, 1.9 GB): **speed is about the same**.
+ripgrep, which Claude Code searches with, takes about 2 s and a query about 1 s. The
+difference is what the answer means. grep finds text, while `ifsdep-ai` knows which
+declaration each name refers to.
+
+| Question | grep | `ifsdep-ai` |
+|---|---|---|
+| Who calls `Customer_Order_API.Get_Customer_Po_No`? | 60 lines with the name: 45 calls to it, 2 calls to other packages' functions with the same name, and comments and the definition | the calls to that one function, one per calling method, Cust first |
+| Which `Get_Customer_Po_No` is that? | only the hand-written one; the getter IFS generates from the `.entity` is in no source file | both, with the `.entity` line for the generated one |
+| What does a client command end up running? | one search per step, knowing how IFS names things from client command to projection action to `.plsvc` method | `callees --depth N` follows it in one query |
+| What would a change affect? | a search per level, by hand | `impact` |
+| Is it Core or Cust, overridden, overlaid? | file names only | layers, overlays, and each `@Override` resolved to its base |
+| Known problems in a file | nothing | `findings --file`, with the suggested fix |
+
+Use grep, or read the file, for:
+- **text inside code:** message strings, comments, column names in SQL;
+- **files the index doesn't read:** `.enumeration`, `.utility`, `.upg` and most of `.entity`;
+- **state machine events:** a client's `call Release()` on an entity's state event isn't
+  linked yet ([#6](https://github.com/phbronson999/ifs-dependency-map/issues/6));
+- **anything changed since the last `init`:** `ifsdep-ai status` says what changed.
+
+The index says where to look. Read the code before you change it. Of the 37,110 `call` lines
+in 25R1 clients, 97.8% link to the action they call, and most of the rest are state events.
+Errors found in the index are tracked as [issues](https://github.com/phbronson999/ifs-dependency-map/issues?q=label%3Abug).
+
+### Example: a check before releasing a customer order
+
+Asked of Claude in a workspace set up with `init`: *"In Cust, stop a customer order from being
+released when it has no Customer PO No."* These are the queries the skill leads to, with
+their answers shortened and paths relative to the Core folder:
+
+1. **What does Release on the CustomerOrder client run?**
+   `ifsdep-ai callees CustomerOrder.ReleaseOrderCommand`
+   ```
+   -> calls_operation CustomerOrderHandling.GetValuesForRelease (action)    at order/model/order/CustomerOrder.client:1454
+   -> calls_operation CustomerOrderHandling.RefreshTaxOnCoRelease (action)  at …/CustomerOrder.client:1467
+   -> calls_operation CustomerOrderHandling.ReleaseOrder (action)           at …/CustomerOrder.client:1520
+   ```
+2. **And the action?**
+   `ifsdep-ai callees CustomerOrderHandling.ReleaseOrder --depth 2` shows that it's carried
+   out by `Release_Order___` in `CustomerOrderHandling.plsvc`. After the tax, discount and
+   promotion steps, that calls `Customer_Order_Flow_API.Start_Release_Order__` (line 1289).
+3. **What else starts a release?**
+   `ifsdep-ai callers Customer_Order_Flow_API.Start_Release_Order__`
+   ```
+   <- invokes Business_Opportunity_Line_API.Handle_Configuration___    at crm/…/BusinessOpportunityLine.plsql:1582
+   <- invokes Create_Business_Obj_Util_API.Release_Customer_Order       at rmcom/…/CreateBusinessObjUtil.plsql:220
+   <- invokes CustomerOrderHandling.Release_Order___                    at order/…/CustomerOrderHandling.plsvc:1289
+   <- invokes Metering_Invoice_Line_Util_API.Create_Release_Customer_Order  at metinv/…/MeteringInvoiceLineUtil.plsql:664
+   <- invokes Metering_Invoice_Line_Util_API.Generate                   at metinv/…/MeteringInvoiceLineUtil.plsql:1109
+   <- invokes Order_Quotation_API.Release_Customer_Order__              at order/…/OrderQuotation.plsql:4625
+   <- invokes QuickOrderFlowHandling.Process_Orders___                  at order/…/QuickOrderFlowHandling.plsvc:96
+   ```
+   A check in the client's `.plsvc` method alone would miss six other ways an order gets
+   released. grep finds 13 lines for this name: the same 10 calls (five of them in two
+   metering methods), plus the definition, its `END` and a comment.
+4. **How do I read the PO number?**
+   `ifsdep-ai find Customer_Order_API.Get_Customer_Po_No` finds two: hand-written at
+   `CustomerOrder.plsql:12214`, and the getter generated from `CustomerOrder.entity:1916`.
+5. **Before writing it:** `ifsdep-ai unit CustomerOrderHandling` shows whether Cust already
+   overlays it, and `ifsdep-ai findings --file CustomerOrderFlow.plsql` shows the problems
+   already known there.
+
+Then Claude reads the methods those answers point to, works out with you where the check
+belongs, and writes the Cust change.
+
 ## Saved index
 
 The desktop app saves each index in its own data folder
@@ -265,7 +333,7 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 59 tests
+cargo test                                         # 60 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 cargo run --bin ifsdep -- --trace <file.plsql> <line>   # what Trace shows for the method on that line
 cargo build --release --bin ifsdep-ai              # target/release/ifsdep-ai.exe, the AI tool
