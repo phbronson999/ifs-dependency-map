@@ -50,7 +50,12 @@ fn init(args: Vec<String>) -> ExitCode {
     let abs = |p: Option<PathBuf>| p.map(|p| std::path::absolute(&p).unwrap_or(p));
     let (core, cust, prev_core) = (abs(core), abs(cust), abs(prev_core));
     let workspace = abs(workspace).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    // The IFS folders are read-only input: check before spending half a minute indexing.
+    // Check before spending half a minute indexing.
+    if !workspace.is_dir() {
+        eprintln!("the workspace folder {} doesn't exist; create it or pick another with --workspace", workspace.display());
+        return ExitCode::from(2);
+    }
+    // The IFS folders are read-only input.
     for root in [&core, &cust, &prev_core].into_iter().flatten() {
         if is_under(&workspace, root) {
             eprintln!("the workspace {} is inside the IFS folder {}, which is never written to; pick the folder above it with --workspace", workspace.display(), root.display());

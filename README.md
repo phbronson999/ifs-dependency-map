@@ -137,6 +137,33 @@ Run it in the folder you start Claude Code in, and only when you want to:
 ifsdep-ai init --core <dir> --cust <dir> [--prev-core <dir>] [--workspace <dir>]
 ```
 
+For example, for a Developer Studio project in `C:\devstudio` with Core 25R1, its Cust
+workspace and the previous Core (23R2) for the upgrade checks:
+
+PowerShell:
+
+```powershell
+& "C:\tools\ifsdep-ai.exe" init `
+    --core "C:\devstudio\project-parent-25r1\core-files\25.1.16\checkout" `
+    --cust "C:\devstudio\project-parent-25r1\RU-releaseUpdate\workspace" `
+    --prev-core "C:\devstudio\project-parent-23r2\core-files\checkout\checkout" `
+    --workspace "C:\devstudio"
+```
+
+Command Prompt (cmd):
+
+```bat
+"C:\tools\ifsdep-ai.exe" init ^
+    --core "C:\devstudio\project-parent-25r1\core-files\25.1.16\checkout" ^
+    --cust "C:\devstudio\project-parent-25r1\RU-releaseUpdate\workspace" ^
+    --prev-core "C:\devstudio\project-parent-23r2\core-files\checkout\checkout" ^
+    --workspace "C:\devstudio"
+```
+
+Use the path where you saved `ifsdep-ai.exe`. Leave out `--prev-core` if you aren't
+upgrading. This writes `C:\devstudio\ifsdep-ai.idx` and
+`C:\devstudio\.claude\skills\ifs-codebase\SKILL.md`, so start Claude Code in `C:\devstudio`.
+
 It indexes the folders (about half a minute on a full Core) and writes two things into
 the workspace (the current folder unless you pass `--workspace`):
 
