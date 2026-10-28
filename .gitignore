@@ -8,3 +8,7 @@
 # Build output (also ignored by ifs-depmap/.gitignore)
 target/
 node_modules/
+
+# AI index and skill written by `ifsdep-ai init` (machine-specific paths)
+ifsdep-ai.idx
+/.claude/skills/ifs-codebase/

@@ -14,4 +14,8 @@ name = "ifsdep_core"
 name = "ifsdep"
 path = "src/bin/ifsdep.rs"
 
+[[bin]]
+name = "ifsdep-ai"
+path = "src/bin/ifsdep-ai.rs"
+
 [dependencies]

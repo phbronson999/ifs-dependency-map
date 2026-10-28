@@ -28,6 +28,9 @@ No Rust or Node is needed. The `.msi` there does the same for managed installs.
   fetches it if it's missing.
 - In the app, choose your Core and Cust folders (and, for upgrades, the previous Core), then
   **Index**. "Open" buttons use VS Code's `code` command, so VS Code must be on the PATH.
+- For an AI assistant such as Claude Code, releases after 0.2.0 also have `ifsdep-ai.exe`: a single
+  file with nothing to install and no need for the desktop app. Put it anywhere and see
+  [Use with an AI assistant](#use-with-an-ai-assistant).
 
 ## What it checks
 
@@ -124,6 +127,46 @@ picked are dimmed: they don't run on that path.
 Trace reads the source files, so it works in the desktop app only. The CLI prints the
 same thing: `ifsdep --trace <file.plsql> <line>`.
 
+## Use with an AI assistant
+
+The full index is far too big for an AI assistant to read (about 250 MB of JSON on a
+whole Core). `ifsdep-ai init` gives it a version it can ask questions of instead.
+Run it in the folder you start Claude Code in, and only when you want to:
+
+```sh
+ifsdep-ai init --core <dir> --cust <dir> [--prev-core <dir>] [--workspace <dir>]
+```
+
+It indexes the folders (about half a minute on a full Core) and writes two things into
+the workspace (the current folder unless you pass `--workspace`):
+
+- `ifsdep-ai.idx`, a compact copy of the index (about 90 MB for 25R1 Core plus Cust).
+- `.claude/skills/ifs-codebase/SKILL.md`, a skill that Claude Code loads in that folder.
+  It tells Claude when to use the queries below instead of grep, gives the full paths of
+  `ifsdep-ai.exe` and the index, and lists the IFS rules the index follows (layers,
+  overrides, generated methods).
+
+Nothing else writes these two files: not indexing, and not the desktop app. Run it again
+to refresh them after the code changes. It won't write inside the IFS folders. The
+queries each take about a second:
+
+| Command | Answers |
+|---|---|
+| `ifsdep-ai find <name>` | where it's defined in Core and Cust, and what it overrides or is overridden by |
+| `ifsdep-ai callers <name> [--depth N]` | what links to it (calls, includes, binds, reads), Cust first |
+| `ifsdep-ai callees <name> [--depth N]` | what it links to |
+| `ifsdep-ai impact <name> [--depth N]` | every unit a change reaches, nearest first, Cust first |
+| `ifsdep-ai unit <name>` | a unit's files in both layers, what Cust adds or overrides, its links and findings |
+| `ifsdep-ai trace <Package_API.Method>` | what Trace shows, with where each call is defined |
+| `ifsdep-ai findings [--file …] [--unit …] [--rule …] [--cust]` | the findings, with the suggested fix |
+| `ifsdep-ai status` | whether files changed since the index was written |
+
+`<name>` is `Unit.Object` (`Customer_Order_API.Get_Customer_Po_No`), a unit, an object, or a
+table or view, in any case. When nothing matches, the answer lists close names, ignoring
+underscores (`CustomerOrder` finds `Customer_Order_API`). Every answer gives full
+`path:line` locations. The index is looked for in `--index`, then `IFSDEP_INDEX`, then
+in the current folder and the folders above it.
+
 ## Saved index
 
 The desktop app saves each index in its own data folder
@@ -162,8 +205,11 @@ ifs-depmap/
     src/upgrade.rs      comparison with a previous Core
     src/trace.rs        one method's steps in run order, by branch (Trace view)
     src/stamp.rs        each file's size and modified time, saved with the index
+    src/ai.rs           AI index (ifsdep-ai init) and its queries
+    src/ai_skill.md     the ifs-codebase skill that ifsdep-ai init fills in
     src/bin/ifsdep.rs   CLI
     tests/fixtures.rs   end-to-end tests
+    tests/ai.rs         AI index and queries
   fixtures/core, fixtures/cust   sample folders with every problem planted
   fixtures/prev-core   an older Core for the upgrade tests
   assets/              README hero (GIF)
@@ -178,18 +224,24 @@ Releases are built on a Windows machine and published with the GitHub CLI:
 1. Bump `version` in `ifs-depmap/src-tauri/tauri.conf.json` and `ifs-depmap/src-tauri/Cargo.toml`.
 2. In `ifs-depmap/`, `npm run tauri build`; the installers land in `src-tauri/target/release/bundle/nsis/` (`.exe`)
    and `bundle/msi/` (`.msi`).
-3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-4. `gh release create vX.Y.Z --repo phbronson999/ifs-dependency-map --title "vX.Y.Z" --notes-file <notes>`
-   with both installers as assets; it becomes the latest release that the Install link above points to.
+3. Build the AI tool on its own, with the C runtime linked in so it runs on a PC without the
+   Visual C++ runtime (and ignores one that's installed):
+   `RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --bin ifsdep-ai --target-dir target/static`
+   gives `target/static/release/ifsdep-ai.exe`. The separate target folder keeps the flag out of
+   the normal builds and the desktop app.
+4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+5. `gh release create vX.Y.Z --repo phbronson999/ifs-dependency-map --title "vX.Y.Z" --notes-file <notes>`
+   with both installers and `ifsdep-ai.exe` as assets; it becomes the latest release that the Install link above points to.
 
 ## Building from source
 
 From `ifs-depmap/`:
 
 ```sh
-cargo test                                         # 49 tests
+cargo test                                         # 58 tests
 cargo run --bin ifsdep -- --core <dir> --cust <dir> [--prev-core <dir>] [--json graph.json] [--strict]
 cargo run --bin ifsdep -- --trace <file.plsql> <line>   # what Trace shows for the method on that line
+cargo build --release --bin ifsdep-ai              # target/release/ifsdep-ai.exe, the AI tool
 
 npm install                                        # typescript + tauri cli
 npm run tauri dev                                  # desktop app

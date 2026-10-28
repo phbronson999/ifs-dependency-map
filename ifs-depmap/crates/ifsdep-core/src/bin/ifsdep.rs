@@ -6,10 +6,16 @@
 //!
 //! `ifsdep --trace <file.plsql> <line>` prints what the method declared on that line calls,
 //! reads and writes, in order and by branch (what the Trace view draws).
+//!
+//! The commands for AI assistants are in `ifsdep-ai`.
 
-use ifsdep_core::{index, IndexOptions, Severity};
+use ifsdep_core::{ai, index, IndexOptions, Severity};
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+const USAGE: &str = "usage: ifsdep --core <dir> [--cust <dir>] [--prev-core <dir>] [--json <out.json>] [--strict]
+       ifsdep --trace <file.plsql> <line>
+(for AI assistants: ifsdep-ai)";
 
 fn trace(file: &str, line: usize) -> ExitCode {
     let text = match std::fs::read_to_string(file) {
@@ -24,30 +30,10 @@ fn trace(file: &str, line: usize) -> ExitCode {
         return ExitCode::FAILURE;
     };
     println!("{} (lines {}-{})", t.name, t.line, t.end_line);
-    print_steps(&t.steps, 1);
+    let mut out = String::new();
+    ai::print_steps(&t.steps, 1, &|_| String::new(), &mut out);
+    print!("{out}");
     ExitCode::SUCCESS
-}
-
-fn print_steps(steps: &[ifsdep_core::trace::TraceStep], indent: usize) {
-    let pad = "   ".repeat(indent);
-    for s in steps {
-        match s.kind {
-            "fork" => {
-                println!("{pad}<> {} :{}", s.text, s.line);
-                for a in &s.arms {
-                    println!("{pad}   [{}]{} :{}", a.label, if a.implied { " (implied)" } else { "" }, a.line);
-                    print_steps(&a.steps, indent + 2);
-                }
-            }
-            "loop" | "cursor" => {
-                println!("{pad}{} {} :{}", s.kind, if s.kind == "loop" { &s.text } else { &s.name }, s.line);
-                print_steps(&s.steps, indent + 1);
-            }
-            "error" => println!("{pad}error {}{} :{}", s.package.as_deref().map(|p| format!("{p}.")).unwrap_or_default(), s.name, s.line),
-            "call" => println!("{pad}call {}{} :{}", s.package.as_deref().map(|p| format!("{p}.")).unwrap_or_default(), s.name, s.line),
-            k => println!("{pad}{k} {} :{}", s.name, s.line),
-        }
-    }
 }
 
 fn main() -> ExitCode {
@@ -72,7 +58,7 @@ fn main() -> ExitCode {
             "--json" => json = args.next().map(PathBuf::from),
             "--strict" => strict = true,
             "-h" | "--help" => {
-                println!("usage: ifsdep --core <dir> [--cust <dir>] [--prev-core <dir>] [--json <out.json>] [--strict]");
+                println!("{USAGE}");
                 return ExitCode::SUCCESS;
             }
             other => {
@@ -82,7 +68,7 @@ fn main() -> ExitCode {
         }
     }
     if core.is_none() && cust.is_none() {
-        eprintln!("usage: ifsdep --core <dir> [--cust <dir>] [--prev-core <dir>] [--json <out.json>] [--strict]");
+        eprintln!("{USAGE}");
         return ExitCode::from(2);
     }
 

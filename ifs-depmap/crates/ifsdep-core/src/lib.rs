@@ -10,6 +10,7 @@
 //! a *pure Cust base*. `@Override` resolves to whichever base exists, Core or
 //! pure Cust.
 
+pub mod ai;
 pub mod analyze;
 pub mod build;
 pub mod datatypes;

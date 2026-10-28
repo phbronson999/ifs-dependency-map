@@ -1,0 +1,51 @@
+# Checks that ifsdep-ai.exe, built with the C runtime linked in, runs on a Windows with no
+# Visual C++ runtime: a Nano Server container. The normal build is run there too and must
+# fail, which proves the container really lacks the runtime.
+name: ifsdep-ai on a clean Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  clean-windows:
+    # windows-2022 runs Windows containers; Nano Server's tag has to match the host.
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: ifs-depmap
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ifsdep-ai, C runtime linked in (as released)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --bin ifsdep-ai --target-dir target/static
+
+      - name: Build ifsdep-ai, normal (for the control)
+        run: cargo build --release --bin ifsdep-ai
+
+      - name: Pull Nano Server
+        run: docker pull mcr.microsoft.com/windows/nanoserver:ltsc2022
+
+      - name: Released build runs in Nano Server
+        run: |
+          $src = "${{ github.workspace }}"
+          $run = { docker run --rm --user ContainerAdministrator -v "${src}:C:\src" mcr.microsoft.com/windows/nanoserver:ltsc2022 @args }
+          & $run C:\src\ifs-depmap\target\static\release\ifsdep-ai.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "ifsdep-ai.exe --help failed in Nano Server (exit $LASTEXITCODE)" }
+          New-Item -ItemType Directory -Force target\ws | Out-Null
+          & $run C:\src\ifs-depmap\target\static\release\ifsdep-ai.exe init --core C:\src\ifs-depmap\fixtures\core --cust C:\src\ifs-depmap\fixtures\cust --workspace C:\src\ifs-depmap\target\ws
+          if ($LASTEXITCODE -ne 0) { throw "ifsdep-ai.exe init failed in Nano Server (exit $LASTEXITCODE)" }
+          & $run C:\src\ifs-depmap\target\static\release\ifsdep-ai.exe callers User_Allowed_Site_API.Get_Default_Site --index C:\src\ifs-depmap\target\ws\ifsdep-ai.idx
+          if ($LASTEXITCODE -ne 0) { throw "ifsdep-ai.exe callers failed in Nano Server (exit $LASTEXITCODE)" }
+
+      - name: Control - the normal build must fail there
+        run: |
+          $src = "${{ github.workspace }}"
+          docker run --rm --user ContainerAdministrator -v "${src}:C:\src" mcr.microsoft.com/windows/nanoserver:ltsc2022 C:\src\ifs-depmap\target\release\ifsdep-ai.exe --help
+          if ($LASTEXITCODE -eq 0) { throw "the normal build ran too, so this container has the Visual C++ runtime and the check above proves nothing" }
+          "the normal build failed as expected (exit $LASTEXITCODE): the container has no Visual C++ runtime"
+          exit 0

@@ -20,14 +20,20 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - `crates/ifsdep-core/` Rust indexer + rules + `ifsdep` CLI. **std only, no crates.**
   - `marble.rs` .client/.projection/.fragment · `plsql.rs` .plsql/.plsvc · `deployini.rs`
   - `build.rs` units, name resolution, edges · `analyze.rs` rules · `json.rs` output
+  - `ai.rs` the AI index (`ifsdep-ai init`) and its queries; `ai_skill.md` is the skill template.
+    Only `ifsdep-ai init` writes the AI index and skill, never indexing or the app (the user's decision).
+    `ifsdep-ai` is its own executable, shipped as a standalone release asset, not inside the
+    desktop installer: it's meant to be used from an AI harness (decided 2026-10-27).
 - `fixtures/core`, `fixtures/cust` synthetic sample folders; every rule has a planted case
 - `crates/ifsdep-core/tests/fixtures.rs` end-to-end tests against the fixtures
 - `ui/` plain TypeScript, no runtime deps (own SVG renderer + layered layout); `node ui/build.mjs`
 - `src-tauri/` Tauri 2 shell: `pick_folder`, `index_folders`, `open_in_editor` (`code -g`)
 
 ## Commands
-- `cargo test` (49 tests, must stay green)
+- `cargo test` (58 tests, must stay green)
 - `cargo run --release --bin ifsdep -- --core <dir> --cust <dir> --json out.json [--strict]`
+- `ifsdep-ai init --core <dir> --cust <dir> [--workspace <dir>]`, then `ifsdep-ai find|callers|callees|impact|unit|trace <name>`,
+  `ifsdep-ai findings`, `ifsdep-ai status`
 - `npm install`, then `npm run tauri dev` / `npm run demo` (builds ui/dist/demo.html)
 
 ## Model (decided with the user, don't change without asking)
