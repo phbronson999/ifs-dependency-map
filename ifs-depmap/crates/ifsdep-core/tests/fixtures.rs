@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 47);
+    assert_eq!(idx.stats.files, 49);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -230,6 +230,61 @@ fn core_code_only_links_to_core() {
     assert_eq!(idx.units[id_index(&base.unit)].name, "TiTraceback");
     assert!(findings(&idx, "DUPLICATE_DEFINITION").iter().all(|f| !f.message.contains("Recalculate")));
     assert!(findings(&idx, "CORE_DEPENDS_ON_CUST").is_empty(), "the rule was removed");
+
+    // A client's calls land on its projection's operations from blocks of every kind that holds
+    // them (an initcontext here), through an entityset (`using ShopOrderRoutingSet`), and from a
+    // client with no `projection` line, which uses the projection with its own name.
+    let calls_to = |caller: &Object| -> Vec<String> {
+        idx.edges
+            .iter()
+            .filter(|e| e.from == caller.id && e.kind == EdgeKind::CallsOperation)
+            .map(|e| {
+                let t = &idx.objects[id_index(&e.to)];
+                format!("{}.{}", idx.units[id_index(&t.unit)].name, t.name)
+            })
+            .collect()
+    };
+    assert_eq!(calls_to(object(&idx, "ShopOrder", "ShopOrderInitContext", false)), ["ShopOrderHandling.GetDefaultSite"]);
+    assert_eq!(calls_to(object(&idx, "ShopOrder", "ResequenceAssistant", false)), ["ShopOrderHandling.ResequenceOperations"]);
+    assert_eq!(calls_to(object(&idx, "ShopOrderAnalysis", "CountLateCommand", false)), ["ShopOrderAnalysis.GetLateCount"]);
+
+    // Issue #16: a public LOOKUP with an ENUMERATION_NAME gets a generated Get_<Attr>_Db, and
+    // a call to it lands there.
+    let db_getter = object(&idx, "Supplier_Part_API", "Get_Origin_Country_Db", false);
+    assert!(db_getter.generated);
+    let label = object(&idx, "Supplier_Part_API", "Get_Origin_Label", false);
+    assert!(idx.edges.iter().any(|e| e.from == label.id && e.to == db_getter.id && e.kind == EdgeKind::Invokes));
+
+    // Issue #15: `bulkcall` links like `call`; `agentcall` (the desktop agent) doesn't.
+    let bulk = object(&idx, "ShopOrder", "ReleaseSelectedCommand", false);
+    let ops: Vec<(usize, &str)> = idx
+        .edges
+        .iter()
+        .filter(|e| e.from == bulk.id && e.kind == EdgeKind::CallsOperation)
+        .map(|e| (e.line, idx.objects[id_index(&e.to)].name.as_str()))
+        .collect();
+    assert_eq!(ops, vec![(bulk.line + 4, "ReleaseOrder")]);
+
+    // Issue #13: a cursor named like a method of the package isn't a call to it, but a real
+    // call to the method elsewhere in the package still is.
+    let release = object(&idx, "Shop_Order_API", "Release_Order", false);
+    let callers: Vec<&str> = idx
+        .edges
+        .iter()
+        .filter(|e| e.to == release.id && e.kind == EdgeKind::Invokes)
+        .map(|e| idx.objects[id_index(&e.from)].name.as_str())
+        .collect();
+    assert_eq!(callers, vec!["Start_Release__"]);
+
+    // Issue #14: an action bound inside an `@Override entity` with nothing to layer over is a
+    // new action, not an override, and a command's call to it gets its link.
+    let reseq = object(&idx, "ShopOrderHandling", "ResequenceOperations", false);
+    assert!(reseq.base.is_none() && !reseq.base_generated);
+    let cmd = object(&idx, "ShopOrder", "ResequenceCommand", false);
+    assert!(
+        idx.edges.iter().any(|e| e.from == cmd.id && e.kind == EdgeKind::CallsOperation && e.to == reseq.id),
+        "ResequenceCommand should call ResequenceOperations"
+    );
 }
 
 #[test]
@@ -515,7 +570,9 @@ fn upgrade_comparison_says_what_changed_under_each_customization() {
     assert!(by_title("procedure Insert___").message.contains("already has the new one"));
     // The group's declaration changed, not the page's `group ShopOrderGroup;`.
     let g = by_title("group ShopOrderGroup").diff.as_ref().unwrap();
-    assert_eq!(g.new_line, 51);
+    let client = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/core/shpord/model/shpord/ShopOrder.client")).unwrap();
+    let group_line = client.lines().position(|l| l.starts_with("group ShopOrderGroup")).unwrap() + 1;
+    assert_eq!(g.new_line, group_line);
     assert!(g.lines.iter().any(|l| l.op == "+" && l.text.contains("\"General\"")));
     // The entity lost an attribute.
     let e = by_title("ShopOrder changed under");

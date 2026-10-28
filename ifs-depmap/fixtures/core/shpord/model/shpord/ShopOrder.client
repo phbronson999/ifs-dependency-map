@@ -34,6 +34,24 @@ command PrintCommand for ShopOrder {
    }
 }
 
+-- Calls the new action bound inside `@Override entity ShopOrderRouting` (issue #14).
+command ResequenceCommand for ShopOrderRouting {
+   label = "Resequence";
+   execute {
+      call ResequenceOperations(OrderNo);
+   }
+}
+
+-- Releases each selected order (issue #15). The agentcall goes to the desktop agent, not the
+-- projection, even though an action has the same name.
+command ReleaseSelectedCommand for ShopOrder {
+   mode = SelectedRecords;
+   bulkexecute {
+      agentcall ReleaseOrder(OrderNo);
+      bulkcall ReleaseOrder(OrderNo);
+   }
+}
+
 -- Overrides a generated command. The Cust command with the same name must not
 -- become its base: Core never layers over Cust.
 @Override
@@ -64,4 +82,22 @@ group ShopOrderGroup for ShopOrder {
 */
 command ReprintCommand for ShopOrder {
    label = "Reprint";
+}
+
+-- Calls inside an initcontext are kept: the block kind is read like a command.
+initcontext ShopOrderInitContext {
+   init command {
+      execute {
+         call GetDefaultSite() into DefaultSite;
+      }
+   }
+}
+
+-- Uses the entityset, not the entity: the action bound to ShopOrderRouting is still callable.
+assistant ResequenceAssistant using ShopOrderRoutingSet {
+   finish command {
+      execute {
+         call ResequenceOperations(OrderNo);
+      }
+   }
 }

@@ -1,0 +1,7 @@
+projection ShopOrderAnalysis;
+component SHPORD;
+layer Core;
+description "Shop order analysis";
+category Users;
+
+function GetLateCount Number;

@@ -22,5 +22,12 @@
          <DATATYPE>TEXT</DATATYPE>
          <LENGTH>10</LENGTH>
       </ATTRIBUTE>
+      <!-- A LOOKUP with an enumeration also gets a generated Get_<Attr>_Db (issue #16). -->
+      <ATTRIBUTE>
+         <NAME>OriginCountry</NAME>
+         <IS_PUBLIC>1</IS_PUBLIC>
+         <DATATYPE>LOOKUP</DATATYPE>
+         <ENUMERATION_NAME>IsoCountry</ENUMERATION_NAME>
+      </ATTRIBUTE>
    </ATTRIBUTES>
 </ENTITY>

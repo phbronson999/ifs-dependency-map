@@ -45,6 +45,9 @@ pub struct Decl {
     pub name: String,
     pub line: usize,
     pub modifier: Option<String>,
+    /// The modifier comes from the `@Override entity` the action or function is bound in,
+    /// not from its own declaration.
+    pub inherited: bool,
     pub section: Section,
     pub target: Option<String>,
     pub dynamic: Option<String>,
@@ -55,6 +58,8 @@ pub struct Decl {
 pub struct ParsedMarble {
     pub header_kind: Option<String>,
     pub name: Option<String>,
+    /// The line of the `client X;` / `projection X;` / `fragment X;` header.
+    pub header_line: usize,
     pub component: Option<String>,
     pub layer: Option<String>,
     /// For `.client` files: `projection X;`
@@ -70,6 +75,9 @@ pub const PROJECTION_KWS: &[&str] = &[
 pub const CLIENT_KWS: &[&str] = &[
     "page", "list", "group", "dialog", "command", "selector", "assistant", "navigator", "card",
     "tree", "chart", "calendar", "sheet", "tabs", "singleton",
+    // These hold `call`s too (about 1,800 lines in 25R1), which were dropped while unparsed.
+    "workflow", "fieldset", "initcontext", "searchcontext", "ganttchart", "ganttchartitem",
+    "kanbanboard", "stackedcalendar",
 ];
 
 /// Declarations whose body can hold bound actions and functions.
@@ -149,6 +157,7 @@ pub fn parse(text: &str, file_kind: FileKind) -> ParsedMarble {
                         if out.name.is_none() {
                             out.header_kind = Some(kw.clone());
                             out.name = words.get(1).cloned();
+                            out.header_line = line_no;
                         }
                     }
                     "component" => out.component = words.get(1).map(|s| s.to_ascii_uppercase()),
@@ -182,6 +191,7 @@ pub fn parse(text: &str, file_kind: FileKind) -> ParsedMarble {
                                 name: name.clone(),
                                 line: line_no,
                                 modifier: pending.modifier.take(),
+                                inherited: false,
                                 section,
                                 target,
                                 dynamic: pending.dynamic.take(),
@@ -206,11 +216,13 @@ pub fn parse(text: &str, file_kind: FileKind) -> ParsedMarble {
                 && parent.section == Section::Projection
             {
                 if let Some(name) = words.get(1) {
+                    let own = pending.modifier.take();
                     let decl = Decl {
                         kind: first.clone(),
                         name: name.clone(),
                         line: line_no,
-                        modifier: pending.modifier.take().or_else(|| parent.modifier.clone()),
+                        inherited: own.is_none() && parent.modifier.is_some(),
+                        modifier: own.or_else(|| parent.modifier.clone()),
                         section: Section::Projection,
                         target: Some(parent.name.clone()),
                         dynamic: pending.dynamic.take().or_else(|| parent.dynamic.clone()),
@@ -253,7 +265,9 @@ pub fn parse(text: &str, file_kind: FileKind) -> ParsedMarble {
                     dynamic: pending.dynamic.clone(),
                 });
             }
-            if let Some(p) = words.iter().position(|w| w == "call") {
+            // `bulkcall` runs the action once per selected record. Not `agentcall`: that's the
+            // desktop agent on the user's PC (`FileExists`, `Download`), not the projection.
+            if let Some(p) = words.iter().position(|w| w == "call" || w == "bulkcall") {
                 if let Some(op) = words.get(p + 1).filter(|w| w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
                     out.decls[ci].refs.push(Ref {
                         kind: RefKind::Operation,

@@ -70,7 +70,9 @@ fn callers_and_callees_follow_links() {
     assert!(s.contains("ShopOrderHandling.plsvc:10"), "{s}");
     // Depth 2 reaches the projection function the .plsvc method implements, Cust first.
     let cust = s.find("ShopOrderHandling-Cust.projection:17").expect(&s);
-    let core = s.find("ShopOrderHandling.projection:59").expect(&s);
+    let projection = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/core/shpord/model/shpord/ShopOrderHandling.projection")).unwrap();
+    let line = projection.lines().position(|l| l.starts_with("function GetDefaultSite")).unwrap() + 1;
+    let core = s.find(&format!("ShopOrderHandling.projection:{line}")).expect(&s);
     assert!(cust < core, "{s}");
     let s = ix.links("User_Allowed_Site_API.Get_Default_Site", false, &opts()).unwrap();
     assert!(s.contains("-> reads USER_ALLOWED_SITE_PUB (view)"), "{s}");

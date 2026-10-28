@@ -16,6 +16,7 @@ include fragment ProjectLovSelector;
 
 ----------------------------- MAIN ENTRY POINTS -----------------------------
 entityset ShopOrderSet for ShopOrder;
+entityset ShopOrderRoutingSet for ShopOrderRouting;
 
 ------------------------------ ENTITY DETAILS -------------------------------
 entity ShopOrder {
@@ -40,6 +41,17 @@ entity ShopOrder {
    -- Bound action, declared inside the entity.
    action PrintOrder {
       initialcheck implementation;
+   }
+}
+
+-- Overrides the entity generated from the model. The action inside it has no @Override of
+-- its own and nothing to layer over: it's a new action bound to the entity (issue #14).
+@Override
+entity ShopOrderRouting {
+   attribute OrderNo Text;
+
+   action ResequenceOperations {
+      parameter OrderNo Text;
    }
 }
 

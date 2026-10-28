@@ -22,3 +22,11 @@ IS
 BEGIN
    RETURN 1;
 END Get_Vendor_No;
+
+-- Calls the getter IFS generates for the LOOKUP attribute OriginCountry (issue #16).
+FUNCTION Get_Origin_Label (
+   part_no_ IN VARCHAR2 ) RETURN VARCHAR2
+IS
+BEGIN
+   RETURN Supplier_Part_API.Get_Origin_Country_Db(part_no_);
+END Get_Origin_Label;

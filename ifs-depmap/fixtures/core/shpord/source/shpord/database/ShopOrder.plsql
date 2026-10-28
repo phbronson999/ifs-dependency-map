@@ -75,3 +75,32 @@ BEGIN
    rec_ := Shop_Order_API.Get(order_no_);
    RETURN 0;
 END Get_Cost;
+
+-- A cursor named like a method of the package isn't a call to it (issue #13).
+PROCEDURE Release_Order (
+   order_no_ IN VARCHAR2 )
+IS
+BEGIN
+   NULL;
+END Release_Order;
+
+FUNCTION Release_Allowed__ (
+   order_no_ IN VARCHAR2 ) RETURN NUMBER
+IS
+   allowed_ NUMBER;
+   CURSOR release_order IS
+      SELECT 1 FROM shop_order_tab WHERE order_no = order_no_;
+BEGIN
+   OPEN release_order;
+   FETCH release_order INTO allowed_;
+   CLOSE release_order;
+   RETURN allowed_;
+END Release_Allowed__;
+
+-- The cursor above is local to Release_Allowed__: this one is a real call.
+PROCEDURE Start_Release__ (
+   order_no_ IN VARCHAR2 )
+IS
+BEGIN
+   Release_Order(order_no_);
+END Start_Release__;

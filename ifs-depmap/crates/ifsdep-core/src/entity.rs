@@ -14,6 +14,8 @@ pub struct Attribute {
     pub enumeration: bool,
     /// `DATATYPE` as written: TEXT, NUMBER, DATE, TIMESTAMP, ENUMERATION, LOOKUP, BOOLEAN...
     pub datatype: Option<String>,
+    /// `ENUMERATION_NAME`: the enumeration an ENUMERATION or LOOKUP attribute takes its values from.
+    pub enumeration_name: Option<String>,
     /// `LENGTH` (text attributes).
     pub length: Option<u32>,
     /// `IS_PUBLIC` 1: a field of the package's generated `Public_Rec`, filled by `Get()`,
@@ -146,6 +148,11 @@ pub fn parse(text: &str) -> ParsedEntity {
                 if let Some(a) = out.attributes.last_mut() {
                     a.enumeration = value.eq_ignore_ascii_case("ENUMERATION");
                     a.datatype = Some(value.to_ascii_uppercase());
+                }
+            }
+            "ENTITY/ATTRIBUTES/ATTRIBUTE/ENUMERATION_NAME" => {
+                if let Some(a) = out.attributes.last_mut() {
+                    a.enumeration_name = Some(value);
                 }
             }
             "ENTITY/ASSOCIATIONS/ASSOCIATION/NAME" => {

@@ -30,7 +30,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - `src-tauri/` Tauri 2 shell: `pick_folder`, `index_folders`, `open_in_editor` (`code -g`)
 
 ## Commands
-- `cargo test` (58 tests, must stay green)
+- `cargo test` (59 tests, must stay green)
 - `cargo run --release --bin ifsdep -- --core <dir> --cust <dir> --json out.json [--strict]`
 - `ifsdep-ai init --core <dir> --cust <dir> [--workspace <dir>]`, then `ifsdep-ai find|callers|callees|impact|unit|trace <name>`,
   `ifsdep-ai findings`, `ifsdep-ai status`
@@ -48,6 +48,19 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - Other names (calls, references, bindings) resolve in the same unit, then what it includes,
   then what a client/projection it ends up in includes. Never anywhere.
 - Calls into an overridden method land on the override, then follow Overrides to the base.
+- An action/function bound inside an `@Override entity` is part of the override only when an
+  action of that name is bound to the base; otherwise it's a new action, and calls resolve to it
+  (issue #14, 2026-10-28).
+- A cursor named like a method of the package isn't a call to it (issue #13): never inside the
+  method that declares it; a package-level cursor only where it's used as one.
+- A client with no `projection X;` line uses the projection with its own name (issue #19;
+  651 of 655 such clients in 25R1 have one).
+- `bulkcall X()` links like `call X()`; `agentcall` doesn't: it calls the desktop agent on the
+  user's PC, not the projection (issue #15).
+- A bound action is callable from a declaration `for` its entity or `using` an entityset for it
+  (issue #18).
+- Calls in `workflow`, `fieldset`, `initcontext`, `searchcontext`, `ganttchart(item)`,
+  `kanbanboard` and `stackedcalendar` declarations are read like those in commands (issue #17).
 - Objects view follows links downward to tables/views, and views to the tables they read.
 - The tool is read-only: it suggests fixes but never writes to IFS files.
 
@@ -66,7 +79,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
   when `DB_VIEW_NAME` renames the view.
 - Generated methods (checked 2026-10-26 on 25R1 Core calls): from each `.entity`, IFS generates
   `Get()` (Public_Rec: one field per `IS_PUBLIC` attribute without `EXCLUDE_GET_METHOD`),
-  `Get_<Attr>()` and `Get_<Attr>_Db()` (enumerations). A getter coexists with a hand-written method
+  `Get_<Attr>()` and `Get_<Attr>_Db()` (ENUMERATION attributes, and LOOKUP ones with an `ENUMERATION_NAME`, issue #16). A getter coexists with a hand-written method
   of the same name as an overload (it takes the LU's keys), e.g. `Customer_Order_API.Get_Customer_Po_No`.
 - A derived attribute gets its value from `DB_SQL_IMPLEMENTATION`, an association `USE_DEFINITION`
   (`COLUMN_NAME`, exposed as `COLUMN_ALIAS`), or the LU's hand-written view in `.views` (the user,

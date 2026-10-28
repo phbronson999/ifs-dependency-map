@@ -127,12 +127,35 @@ fn local_calls_in(line: &str) -> Vec<String> {
         let variable = word.ends_with('_') && !word.ends_with("__");
         if word.contains('_') && !variable && (next.starts_with('(') || next.starts_with(';')) {
             let before = line[..end - word.len()].trim_end().to_ascii_uppercase();
-            if !before.ends_with("END") {
+            // `OPEN c;`, `CLOSE c;` and `FETCH c` name a cursor, never a method.
+            let after_keyword = |k: &str| {
+                before.strip_suffix(k).is_some_and(|b| !b.chars().next_back().is_some_and(is_ident))
+            };
+            if !before.ends_with("END") && !["OPEN", "CLOSE", "FETCH"].into_iter().any(after_keyword) {
                 out.push(word.to_string());
             }
         }
     }
     out
+}
+
+/// The word in front of the first `name` standing on its own in `line`, upper-cased.
+fn word_before(line: &str, name: &str) -> String {
+    let upper = line.to_ascii_uppercase();
+    let target = name.to_ascii_uppercase();
+    let mut from = 0;
+    while let Some(p) = upper[from..].find(&target) {
+        let at = from + p;
+        let end = at + target.len();
+        let alone = !upper[..at].chars().next_back().is_some_and(is_ident) && !upper[end..].chars().next().is_some_and(is_ident);
+        if alone {
+            let before = upper[..at].trim_end();
+            let start = before.rfind(|c: char| !is_ident(c)).map_or(0, |i| i + before[i..].chars().next().map_or(1, char::len_utf8));
+            return before[start..].to_string();
+        }
+        from = end;
+    }
+    String::new()
 }
 
 /// `Component_Proj_SYS.INSTALLED` → `PROJ`.
@@ -178,6 +201,13 @@ pub fn parse(text: &str) -> ParsedPlsql {
     let mut pending_dynamic: Option<String> = None;
     let mut guards: Vec<Option<String>> = Vec::new();
     let mut current: Option<usize> = None;
+    // Cursors in scope, upper-cased: the package's own and the current method's. A cursor
+    // named like a method of the package (`CURSOR release_order` beside `Release_Order`)
+    // isn't a call to it. In the method that declares it the cursor hides the method, so the
+    // name is never a call there. A package-level cursor can share its name with a procedure,
+    // so there only its uses as a cursor (`FOR r IN c(x)`, `CURRENT OF c`) are skipped.
+    let mut package_cursors: HashSet<String> = HashSet::new();
+    let mut method_cursors: HashSet<String> = HashSet::new();
 
     for (i, line) in cleaned.lines().enumerate() {
         let line_no = i + 1;
@@ -210,9 +240,26 @@ pub fn parse(text: &str) -> ParsedPlsql {
                 dynamic: pending_dynamic.take(),
             });
             current = Some(out.methods.len() - 1);
+            method_cursors.clear();
             continue;
         }
+        let mut declared = String::new();
+        if let Some(rest) = tl.strip_prefix("cursor ") {
+            let (name, _) = ident_at(rest.trim_start(), 0);
+            declared = name.to_ascii_uppercase();
+            if !declared.is_empty() {
+                let scope = if current.is_some() { &mut method_cursors } else { &mut package_cursors };
+                scope.insert(declared.clone());
+            }
+        }
         for name in local_calls_in(line) {
+            let up = name.to_ascii_uppercase();
+            if up == declared
+                || method_cursors.contains(&up)
+                || package_cursors.contains(&up) && matches!(word_before(line, &name).as_str(), "IN" | "OF")
+            {
+                continue;
+            }
             out.calls.push(Call {
                 package: String::new(),
                 method: name,
@@ -641,5 +688,28 @@ END Get_Project_Name;
         let local = parse("PROCEDURE A__ IS\nBEGIN\n   Check_Insert___(rec_);\n   x_ := Get_Name(id_);\n   Do_It;\nEND A__;\n");
         let names: Vec<_> = local.calls.iter().map(|c| c.method.as_str()).collect();
         assert_eq!(names, ["Check_Insert___", "Get_Name", "Do_It"]);
+    }
+
+    #[test]
+    fn cursors_are_not_calls() {
+        let src = "CURSOR get_all_lines IS SELECT 1 FROM dual;\n\
+                   PROCEDURE A__ IS\n   CURSOR get_desc (id_ VARCHAR2) IS SELECT 1 FROM dual;\nBEGIN\n\
+                   \x20  OPEN get_desc(x_);\n   CLOSE get_desc;\n   FOR r_ IN get_desc(x_) LOOP\n      NULL;\n   END LOOP;\n\
+                   \x20  FOR r_ IN get_all_lines(x_) LOOP\n      NULL;\n   END LOOP;\n   OPEN other_cur;\nEND A__;\n\
+                   PROCEDURE B__ IS\nBEGIN\n   Get_Desc(y_);\nEND B__;\n";
+        let p = parse(src);
+        let names: Vec<_> = p.calls.iter().map(|c| (c.method.as_str(), c.in_method)).collect();
+        // A's cursor is local to A, so B's Get_Desc is a call; the package's cursor isn't one.
+        // `other_cur` is declared nowhere here, but follows OPEN.
+        assert_eq!(names, [("Get_Desc", Some(1))]);
+
+        // A package-level cursor and a procedure can share a name: a statement is the procedure.
+        let src = "CURSOR Get_Alternates___ (part_ VARCHAR2) IS SELECT 1 FROM dual;\n\
+                   PROCEDURE Get_Alternates___ (part_ VARCHAR2) IS\nBEGIN\n   NULL;\nEND Get_Alternates___;\n\
+                   PROCEDURE C__ IS\nBEGIN\n   Get_Alternates___(\n      part_);\n\
+                   \x20  FOR r_ IN Get_Alternates___(part_) LOOP\n      UPDATE t SET x = 1 WHERE CURRENT OF Get_Alternates___;\n   END LOOP;\nEND C__;\n";
+        let p = parse(src);
+        let lines: Vec<_> = p.calls.iter().map(|c| (c.method.as_str(), c.line)).collect();
+        assert_eq!(lines, [("Get_Alternates___", 8)]);
     }
 }

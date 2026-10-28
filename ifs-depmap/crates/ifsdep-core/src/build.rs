@@ -216,6 +216,8 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     // 3. Objects.
     let mut pending_refs: Vec<(usize, marble::Ref)> = Vec::new();
     let mut method_objects: HashMap<(usize, usize), usize> = HashMap::new();
+    // Actions and functions whose modifier comes from the `@Override entity` they're bound in.
+    let mut inherited_modifier: HashSet<usize> = HashSet::new();
     for fi in 0..idx.files.len() {
         let Some(ui) = file_unit(&idx, fi) else { continue };
         let unit_id = idx.units[ui].id.clone();
@@ -223,6 +225,9 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
             Parsed::Marble(m) => {
                 for d in &m.decls {
                     let oi = idx.objects.len();
+                    if d.inherited {
+                        inherited_modifier.insert(oi);
+                    }
                     idx.objects.push(Object {
                         id: format!("o{oi}"),
                         unit: unit_id.clone(),
@@ -336,7 +341,10 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
                         continue;
                     }
                     let getter = add(&mut idx, format!("Get_{}", plsql::snake_name(&a.name)), f, a.line, true);
-                    if a.enumeration {
+                    // Also for a LOOKUP with an ENUMERATION_NAME (25R1: Core calls 46 of these
+                    // and none is hand-written, e.g. Company_API.Get_Country_Db).
+                    let lookup = a.datatype.as_deref() == Some("LOOKUP") && a.enumeration_name.is_some();
+                    if a.enumeration || lookup {
                         add(&mut idx, format!("Get_{}_Db", plsql::snake_name(&a.name)), f, a.line, true);
                     }
                     if a.implementation.is_some() {
@@ -372,6 +380,12 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
         detail: None,
     };
 
+    // A client with no `projection X;` in any of its files uses the projection with its own name
+    // (25R1: 651 of the 655 clients without the line have one, and call its functions).
+    let declares_projection: HashSet<usize> = (0..idx.files.len())
+        .filter(|&fi| matches!(&parsed[fi], Parsed::Marble(m) if m.projection.is_some()))
+        .filter_map(|fi| file_unit(&idx, fi))
+        .collect();
     for fi in 0..idx.files.len() {
         let Some(ui) = file_unit(&idx, fi) else { continue };
         let from = idx.units[ui].id.clone();
@@ -389,6 +403,15 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
                             edge(from.clone(), idx.units[t].id.clone(), EdgeKind::UsesProjection, fi, *line, layer),
                         ),
                         None => unresolved.push(unresolved_finding(&idx, fi, *line, "projection", p, &from)),
+                    }
+                } else if idx.files[fi].kind == FileKind::Client
+                    && idx.files[fi].role == FileRole::Base
+                    && !declares_projection.contains(&ui)
+                {
+                    if let Some(t) = lookup(UnitKind::Projection, idx.units[ui].name.to_ascii_uppercase()) {
+                        let mut e = edge(from.clone(), idx.units[t].id.clone(), EdgeKind::UsesProjection, fi, m.header_line.max(1), layer);
+                        e.detail = Some("same name".into());
+                        push_edge(&mut edges, e);
                     }
                 }
                 for inc in &m.includes {
@@ -576,6 +599,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
     };
 
     // Overrides → base.
+    let mut not_overrides: Vec<usize> = Vec::new();
     for oi in 0..idx.objects.len() {
         if idx.objects[oi].modifier.is_none() {
             continue;
@@ -601,6 +625,12 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
             idx.files[o.file].root,
             true,
         );
+        if base.is_none() && inherited_modifier.contains(&oi) {
+            // Bound inside an `@Override entity` with no action of that name bound to the
+            // base: a new action, which calls and references resolve to like any other.
+            not_overrides.push(oi);
+            continue;
+        }
         if base.is_none() {
             // Below Core there is only generated code, and a pure Cust package can only
             // override what its own model generates.
@@ -623,6 +653,9 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
             e.detail = o.modifier.clone();
             push_edge(&mut edges, e);
         }
+    }
+    for oi in not_overrides {
+        idx.objects[oi].modifier = None;
     }
 
     // Database relations: tables and views, by upper-cased name. Where each is defined is
@@ -686,6 +719,14 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
         }
     }
 
+    // The entities each entityset is for: `assistant A using TaskVirtualSet` can call an action
+    // bound to TaskVirtual.
+    let mut entityset_for: HashMap<String, Vec<String>> = HashMap::new();
+    for o in idx.objects.iter().filter(|o| o.kind == "entityset") {
+        if let Some(t) = &o.target {
+            entityset_for.entry(o.name.to_ascii_uppercase()).or_default().push(t.to_ascii_uppercase());
+        }
+    }
     // References, arrays, enumerations, fetch calls, `from =` and `call X()`.
     for (oi, r) in &pending_refs {
         let from_unit = id_index(&idx.objects[*oi].unit);
@@ -718,11 +759,15 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
                     &mut closure,
                     &r.target,
                     &|c: &Object| {
-                        // An action bound to an entity is only callable from a command for that entity.
+                        // An action bound to an entity is only callable from a command for that
+                        // entity, or from something using an entityset for it.
                         let entity = idx.objects[*oi].target.as_deref();
+                        let through_set = |e: &str, t: &str| {
+                            entityset_for.get(&e.to_ascii_uppercase()).is_some_and(|v| v.iter().any(|x| x.eq_ignore_ascii_case(t)))
+                        };
                         (c.kind == "action" || c.kind == "function")
                             && c.section == Some(Section::Projection)
-                            && c.target.as_deref().is_none_or(|t| entity.is_some_and(|e| e.eq_ignore_ascii_case(t)))
+                            && c.target.as_deref().is_none_or(|t| entity.is_some_and(|e| e.eq_ignore_ascii_case(t) || through_set(e, t)))
                     },
                     from_unit,
                     None,

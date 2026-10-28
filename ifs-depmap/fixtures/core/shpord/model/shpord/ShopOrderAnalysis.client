@@ -1,0 +1,11 @@
+client ShopOrderAnalysis;
+component SHPORD;
+layer Core;
+-- No `projection` line: the client uses the projection with its own name.
+
+command CountLateCommand {
+   label = "Count Late Orders";
+   execute {
+      call GetLateCount() into LateCount;
+   }
+}
