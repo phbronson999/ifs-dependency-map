@@ -81,9 +81,9 @@ fn finds_all_three_cycles_and_classifies_them() {
     let cust_loop = cycles
         .iter()
         .find(|f| unit_names(&idx, f) == ["ShopOrderCommon", "TiShopOrderExtras"])
-        .expect("cycle that only exists with the Cust overlay applied");
+        .expect("cycle that only exists with the -Cust file added");
     assert!(cust_loop.title.contains("Cust"));
-    // The break point is the include in the Cust overlay, not the Core file.
+    // The break point is the include in the -Cust file, not the Core file.
     let loc = cust_loop.location.as_ref().unwrap();
     assert_eq!(idx.files[loc.file].rel_path, "shpord/model/shpord/ShopOrderCommon-Cust.fragment");
     assert!(cust_loop.suggestion.as_ref().unwrap().snippet.as_ref().unwrap().contains("- include fragment TiShopOrderExtras;"));
@@ -111,7 +111,7 @@ fn duplicate_definition_across_fragments() {
 }
 
 #[test]
-fn overlay_redeclaration_needs_override() {
+fn cust_redeclaration_needs_override() {
     let idx = fixtures();
     let m = findings(&idx, "MISSING_OVERRIDE");
     assert_eq!(m.len(), 1);
@@ -162,8 +162,8 @@ fn overrides_of_generated_methods_have_a_base() {
     assert!(unissue.base.is_none());
     assert!(unissue.base_generated);
 
-    // Cust: a template method in an overlay, and anything in a pure Cust package, is generated.
-    // An unknown name in an overlay is not.
+    // Cust: a template method in a -Cust file of a Core unit, and anything in a pure Cust package, is generated.
+    // An unknown name in such a file is not.
     assert!(object(&idx, "Shop_Order_API", "Check_Delete___", true).base_generated);
     assert!(object(&idx, "Ti_Quality_Checks_API", "Check_Insert___", true).base_generated);
     assert!(object(&idx, "Ti_Quality_Checks_API", "Get_Check_Type", true).base_generated);

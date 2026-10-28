@@ -1,6 +1,6 @@
 // Turns the index into what each zoom level draws. Components roll up their
 // units' edges; Files shows logical units (a Core file plus its -Cust
-// overlay); Objects shows declarations inside chosen units.
+// file); Objects shows declarations inside chosen units.
 
 type Level = "components" | "units" | "objects" | "trace";
 

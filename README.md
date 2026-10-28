@@ -36,9 +36,9 @@ No Rust or Node is needed. The `.msi` there does the same for managed installs.
 
 | Rule | Severity | What it means |
 |---|---|---|
-| `CYCLE` | error | `include fragment` chains that loop. Marked *appears with Cust layer* when the loop only exists once Cust overlays are applied; Core-only loops are reported but no fix is suggested. |
+| `CYCLE` | error | `include fragment` chains that loop. Marked *appears with Cust layer* when the loop only exists once the `-Cust` files are added; Core-only loops are reported but no fix is suggested. |
 | `DUPLICATE_DEFINITION` | error | The same construct (structure, entity, function…) reaches one client/projection from two different units. |
-| `MISSING_OVERRIDE` | error | A `-Cust` overlay redeclares a Core construct without `@Override`. |
+| `MISSING_OVERRIDE` | error | A `-Cust` file redeclares a Core construct without `@Override`. |
 | `CONNECTION_MISSING` | warning | A cross-component include or `Xxx_API` call to a component that deploy.ini doesn't connect, directly or through a chain of STATIC connections (those are always installed together). |
 | `DYNAMIC_NOT_GUARDED` | warning | A DYNAMIC connection used without `@DynamicComponentDependency` or a `$IF Component_X_SYS.INSTALLED` guard. |
 | `LAYER_MISMATCH` | warning | `layer Cust;` in the Core folder, or `layer Core;` in the Cust folder. |
@@ -54,7 +54,7 @@ No Rust or Node is needed. The `.msi` there does the same for managed installs.
 - **Layer comes from the folder.** Everything under the Core folder is Core;
   everything under the Cust folder is Cust.
 - **Unit** = a logical name. `ShopOrderCommon.fragment` (Core) and
-  `ShopOrderCommon-Cust.fragment` (Cust) are one unit with an *overlay*.
+  `ShopOrderCommon-Cust.fragment` (Cust) are one unit: Core plus its Cust file.
 - A `-Cust` file with no Core counterpart is a **pure Cust** unit; its
   generated base is the base for any `@Override` of its constructs.
 - **Core never depends on Cust.** Core is IFS's delivered code, so names in Core
@@ -207,7 +207,7 @@ declaration each name refers to.
 | Which `Get_Customer_Po_No` is that? | only the hand-written one; the getter IFS generates from the `.entity` is in no source file | both, with the `.entity` line for the generated one |
 | What does a client command end up running? | one search per step, knowing how IFS names things from client command to projection action to `.plsvc` method | `callees --depth N` follows it in one query |
 | What would a change affect? | a search per level, by hand | `impact` |
-| Is it Core or Cust, overridden, overlaid? | file names only | layers, overlays, and each `@Override` resolved to its base |
+| Is it Core or Cust, and is it overridden? | file names only | the layer of each file, and each `@Override` resolved to its base |
 | Known problems in a file | nothing | `findings --file`, with the suggested fix |
 
 Use grep, or read the file, for:
@@ -255,8 +255,8 @@ their answers shortened and paths relative to the Core folder:
 4. **How do I read the PO number?**
    `ifsdep-ai find Customer_Order_API.Get_Customer_Po_No` finds two: hand-written at
    `CustomerOrder.plsql:12214`, and the getter generated from `CustomerOrder.entity:1916`.
-5. **Before writing it:** `ifsdep-ai unit CustomerOrderHandling` shows whether Cust already
-   overlays it, and `ifsdep-ai findings --file CustomerOrderFlow.plsql` shows the problems
+5. **Before writing it:** `ifsdep-ai unit CustomerOrderHandling` shows what Cust already
+   adds or overrides there, and `ifsdep-ai findings --file CustomerOrderFlow.plsql` shows the problems
    already known there.
 
 Then Claude reads the methods those answers point to, works out with you where the check

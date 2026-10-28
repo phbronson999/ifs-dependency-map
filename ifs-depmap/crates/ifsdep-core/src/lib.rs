@@ -6,7 +6,7 @@
 //! deploy.ini problems).
 //!
 //! Layer is decided by which root a file lives in. A `-Cust` file whose
-//! logical name also exists in Core is an *overlay*; one with no Core match is
+//! logical name also exists in Core joins that Core unit; one with no Core match is
 //! a *pure Cust base*. `@Override` resolves to whichever base exists, Core or
 //! pure Cust.
 

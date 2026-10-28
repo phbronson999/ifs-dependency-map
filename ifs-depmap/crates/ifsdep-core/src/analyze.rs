@@ -4,7 +4,7 @@
 //!   once the Cust layer is applied.
 //! - DUPLICATE_DEFINITION: the same construct reaches one client/projection
 //!   from two different units.
-//! - MISSING_OVERRIDE: a Cust overlay redeclares a Core construct without `@Override`.
+//! - MISSING_OVERRIDE: a `-Cust` file redeclares a Core construct without `@Override`.
 //! - OVERRIDE_NO_BASE: `@Override`/`@Overtake` with nothing to layer over.
 //! - CONNECTION_MISSING / DYNAMIC_NOT_GUARDED: cross-component dependencies
 //!   checked against deploy.ini `[Connections]`.
@@ -384,7 +384,7 @@ fn duplicates(idx: &Index, src: &mut Source, out: &mut Vec<Finding>) {
         by_unit.entry(o.unit.as_str()).or_default().push(oi);
     }
 
-    // a) Same unit, two files, no @Override → the overlay forgot the annotation.
+    // a) Same unit, two files, no @Override → the -Cust file forgot the annotation.
     for u in &idx.units {
         let mut seen: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for &oi in by_unit.get(u.id.as_str()).into_iter().flatten() {

@@ -93,7 +93,7 @@ fn impact_reaches_cust_units() {
 fn unit_lists_files_and_cust_changes() {
     let (_, ix) = fixtures();
     let s = ix.unit("shoporderhandling", &opts()).unwrap();
-    assert!(s.contains("ShopOrderHandling (projection), component SHPORD, base in Core, with a Cust overlay"), "{s}");
+    assert!(s.contains("ShopOrderHandling (projection), component SHPORD, base in Core, with a -Cust file"), "{s}");
     assert!(s.contains("@Override entity ShopOrder :11"), "{s}");
     assert!(s.contains("new function GetDefaultSite :17"), "{s}");
     assert!(s.contains("MISSING_OVERRIDE"), "{s}");

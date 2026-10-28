@@ -71,8 +71,7 @@ Use grep, or read the file, for:
 
 - The layer comes from the folder a file is in: Core or Cust. **Core is never edited.** Changes
   go in Cust, as `-Cust` files.
-- `X.fragment` in Core plus `X-Cust.fragment` in Cust make up one unit. The Cust file is an
-  overlay. A `-Cust` file with no Core match is a pure Cust unit.
+- `X.fragment` in Core plus `X-Cust.fragment` in Cust make up one unit. A `-Cust` file with no Core match is a pure Cust unit.
 - `@Override` / `@Overtake` resolve to the base in the same unit first, then in what the unit
   includes, then anywhere. A call into an overridden method lands on the override, which then
   reaches the base.

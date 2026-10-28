@@ -586,7 +586,7 @@ impl AiIndex {
                 Node::Object(ob) => {
                     let obj = &self.objects[ob];
                     let u = &self.units[obj.unit];
-                    let _ = writeln!(s, "  in {} ({}, component {}){}", u.name, u.kind, u.component, if u.overlay { ", has a Cust overlay" } else { "" });
+                    let _ = writeln!(s, "  in {} ({}, component {}){}", u.name, u.kind, u.component, if u.overlay { ", has a -Cust file" } else { "" });
                     if let Some(b) = obj.base {
                         let _ = writeln!(s, "  overrides {} at {}", self.label(Node::Object(b)), self.node_place(Node::Object(b)));
                     } else if !obj.modifier.is_empty() {
@@ -769,7 +769,7 @@ impl AiIndex {
                 un.kind,
                 un.component,
                 un.origin.as_str(),
-                if un.overlay { ", with a Cust overlay" } else { "" }
+                if un.overlay { ", with a -Cust file" } else { "" }
             );
             self.unit_files(u, &mut s);
             let objs = &self.unit_objects[u];

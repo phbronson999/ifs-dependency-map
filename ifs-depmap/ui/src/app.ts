@@ -544,7 +544,7 @@ function renderToolbar() {
     ? `<div class="legend"><span><i class="core"></i>Core method</span><span><i class="cust"></i>Cust method</span><span><i class="db"></i>table / view</span><span>◆ pick a branch to see inside it</span><span>↻ runs in a loop</span></div>`
     : ui.level === "objects"
     ? `<div class="legend"><span><i class="core"></i>declared in Core file</span><span><i class="cust"></i>declared in Cust file</span><span><i class="db"></i>table / view</span></div>`
-    : `<div class="legend"><span><i class="core"></i>Core</span><span><i class="overlay"></i>Core + Cust overlay</span><span><i class="cust"></i>pure Cust</span>${
+    : `<div class="legend"><span><i class="core"></i>Core</span><span><i class="overlay"></i>Core + Cust</span><span><i class="cust"></i>pure Cust</span>${
         ui.level === "components" ? `<span>Select a component to see its links</span>` : ""
       }</div>`;
   $("filters").innerHTML = filters;
@@ -1179,10 +1179,10 @@ ${findingLinks(m.findingsByComponent.get(name) ?? [])}
 
 function unitHtml(m: Model, id: string) {
   const u = m.unit(id);
-  const origin = u.origin === "Core" ? (u.has_overlay ? "Core with a Cust overlay" : "Core") : "pure Cust (no Core file)";
+  const origin = u.origin === "Core" ? (u.has_overlay ? "Core with a -Cust file" : "Core") : "pure Cust (no Core file)";
   const files = u.files.map((fi) => {
     const f = m.file(fi);
-    return fileLine(fi, null, `${f.rel_path}${f.role === "overlay" ? "  (overlay)" : ""}`);
+    return fileLine(fi, null, `${f.rel_path}${f.role === "overlay" ? "  (Cust)" : ""}`);
   }).join("");
   const edges = m.edgesByUnit.get(id) ?? [];
   const group = (dir: "out" | "in") => {

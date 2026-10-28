@@ -38,7 +38,7 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 
 ## Model (decided with the user, don't change without asking)
 - Layer comes from the folder a file is in, never from the filename.
-- A unit = logical name. `X.fragment` (Core) + `X-Cust.fragment` (Cust) = one unit with an overlay.
+- A unit = logical name. `X.fragment` (Core) + `X-Cust.fragment` (Cust) = one unit (Core plus its Cust file).
   A `-Cust` file with no Core match is a pure Cust unit and is the base for overrides of its constructs.
 - Core is never edited, so Core never depends on Cust: names in Core files resolve against Core
   only (decided 2026-10-25; the CORE_DEPENDS_ON_CUST rule was removed for this reason).
