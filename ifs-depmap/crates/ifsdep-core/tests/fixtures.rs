@@ -294,6 +294,10 @@ fn deploy_ini_connections() {
     assert_eq!(missing.len(), 3, "{missing:?}");
     assert!(missing.iter().any(|t| t.starts_with("SHPORD → QUAMAN")));
     assert!(missing.iter().filter(|t| t.starts_with("SHPORD → TIQUAL")).count() == 2);
+    // QUAMAN includes an MPCCOM fragment without declaring MPCCOM, but it declares
+    // Invent=STATIC, and INVENT declares Mpccom=STATIC: always installed together, not missing.
+    assert!(idx.edges.iter().any(|e| e.kind == EdgeKind::Include && idx.files[e.file].component == "QUAMAN"));
+    assert!(!missing.iter().any(|t| t.starts_with("QUAMAN")), "{missing:?}");
 
     // Guarded uses of the DYNAMIC Proj connection are fine; the unguarded Cust call is not.
     let dynamic = findings(&idx, "DYNAMIC_NOT_GUARDED");

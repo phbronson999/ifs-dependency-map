@@ -59,6 +59,8 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
   user's PC, not the projection (issue #15).
 - A bound action is callable from a declaration `for` its entity or `using` an entityset for it
   (issue #18).
+- A component reached through a chain of STATIC `[Connections]` counts as declared for
+  CONNECTION_MISSING; a chain through a DYNAMIC one doesn't (issue #21, the user, 2026-10-28).
 - Calls in `workflow`, `fieldset`, `initcontext`, `searchcontext`, `ganttchart(item)`,
   `kanbanboard` and `stackedcalendar` declarations are read like those in commands (issue #17).
 - Objects view follows links downward to tables/views, and views to the tables they read.

@@ -3,6 +3,8 @@ component QUAMAN;
 layer Core;
 description "List of values for inspection codes";
 
+include fragment PartPlanningPanel;
+
 --------------------------- PROJECTION FRAGMENTS ----------------------------
 
 query QualityInspectionLov {

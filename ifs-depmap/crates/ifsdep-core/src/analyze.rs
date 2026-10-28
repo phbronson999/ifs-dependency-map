@@ -619,6 +619,28 @@ fn overrides(idx: &Index, out: &mut Vec<Finding>) {
 fn connections(idx: &Index, out: &mut Vec<Finding>) {
     let comps: HashMap<&str, &Component> = idx.components.iter().map(|c| (c.name.as_str(), c)).collect();
     let mut seen: HashSet<(usize, String, &str)> = HashSet::new();
+    // What a component reaches through STATIC connections, its own and theirs: always installed
+    // with it, so not missing. (25R1 Core relies on this ~19,000 times: ORDER calls ENTERP
+    // through Invoic=STATIC and lists no Enterp.) A chain through a DYNAMIC one doesn't count.
+    let static_reach: HashMap<&str, HashSet<&str>> = idx
+        .components
+        .iter()
+        .map(|start| {
+            let mut seen: HashSet<&str> = HashSet::new();
+            let mut stack = vec![start];
+            while let Some(n) = stack.pop() {
+                for c in n.connections.iter().filter(|c| c.kind == "STATIC") {
+                    if let Some(t) = comps.get(c.target.as_str()) {
+                        if seen.insert(t.name.as_str()) {
+                            stack.push(t);
+                        }
+                    }
+                }
+            }
+            (start.name.as_str(), seen)
+        })
+        .collect();
+    let reaches = |from: &str, to: &str| static_reach.get(from).is_some_and(|s| s.contains(to));
 
     for e in &idx.edges {
         if !matches!(e.kind, EdgeKind::Include | EdgeKind::Calls) {
@@ -648,6 +670,7 @@ fn connections(idx: &Index, out: &mut Vec<Finding>) {
             _ => format!("calls {} ({})", target_unit.name, e.detail.clone().unwrap_or_default()),
         };
         match conn {
+            None if reaches(src, tgt) => {}
             None => {
                 if !seen.insert((e.file, tgt.to_string(), "missing")) {
                     continue;
