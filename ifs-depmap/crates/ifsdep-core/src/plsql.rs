@@ -178,20 +178,23 @@ fn guard_component(line: &str) -> Option<String> {
 pub fn parse(text: &str) -> ParsedPlsql {
     let mut out = ParsedPlsql::default();
 
-    // Header: `--  Component:  SHPORD` comments and `layer Cust;` / `component X;` lines.
+    // Header: `layer Cust;` / `component X;` lines. Not the `--  Component:  SHPORD` comment: it's
+    // copied between files and goes stale (25R1: 25 of 9,807 disagree with their folder, and
+    // every one with an .entity has the folder's component there), so the folder decides.
     for line in text.lines().take(80) {
         let t = line.trim();
-        if let Some(c) = t.strip_prefix("--") {
-            let c = c.trim();
-            if c.len() > 10 && c[..10].eq_ignore_ascii_case("component:") {
-                out.component = c[10..].split_whitespace().next().map(|s| s.to_ascii_uppercase());
-            }
-        } else {
+        if !t.starts_with("--") {
+            // Only `layer Cust;` / `component SHPORD;`: a record field or parameter can also
+            // start a line with these words (`component VARCHAR2(30),`).
             let lower = t.to_ascii_lowercase();
-            if let Some(v) = lower.strip_prefix("layer ") {
-                out.layer = Some(capitalize(v.trim_end_matches(';').trim()));
-            } else if let Some(v) = lower.strip_prefix("component ") {
-                out.component = Some(v.trim_end_matches(';').trim().to_ascii_uppercase());
+            let statement = |v: &str| -> Option<String> {
+                let name = v.strip_suffix(';')?.trim();
+                (!name.is_empty() && name.chars().all(is_ident)).then(|| name.to_string())
+            };
+            if let Some(v) = lower.strip_prefix("layer ").and_then(statement) {
+                out.layer = Some(capitalize(&v));
+            } else if let Some(v) = lower.strip_prefix("component ").and_then(statement) {
+                out.component = Some(v.to_ascii_uppercase());
             }
         }
     }
@@ -667,7 +670,8 @@ BEGIN
 END Get_Project_Name;
 "#;
         let p = parse(src);
-        assert_eq!(p.component.as_deref(), Some("SHPORD"));
+        // The `--  Component:` comment isn't read; the folder decides.
+        assert_eq!(p.component, None);
         assert_eq!(p.layer.as_deref(), Some("Cust"));
         assert_eq!(p.methods.len(), 2);
         assert_eq!(p.methods[0].modifier.as_deref(), Some("Override"));
@@ -688,6 +692,14 @@ END Get_Project_Name;
         let local = parse("PROCEDURE A__ IS\nBEGIN\n   Check_Insert___(rec_);\n   x_ := Get_Name(id_);\n   Do_It;\nEND A__;\n");
         let names: Vec<_> = local.calls.iter().map(|c| c.method.as_str()).collect();
         assert_eq!(names, ["Check_Insert___", "Get_Name", "Do_It"]);
+    }
+
+    #[test]
+    fn component_comes_from_the_header_not_a_field() {
+        let src = "--  Component:    ENTERP\nlayer Core;\nTYPE Rec IS RECORD (\n   component        VARCHAR2(30),\n   layer            VARCHAR2(10) );\n";
+        let p = parse(src);
+        assert_eq!((p.component.as_deref(), p.layer.as_deref()), (None, Some("Core")));
+        assert_eq!(parse("component SHPORD;\nlayer Cust;\n").component.as_deref(), Some("SHPORD"));
     }
 
     #[test]

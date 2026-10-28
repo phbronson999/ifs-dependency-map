@@ -70,7 +70,8 @@ Background on the IFS file types: https://phbronson999.github.io/ifs-dev-docs/
 - Assumed: a -Cust file's header uses the base name (`fragment ShopOrderCommon;`).
 - Assumed: [Connections] from a component's Core and Cust deploy.ini are combined.
 - Assumed: projection action `DoIt` is implemented by `.plsvc` method `Do_It___`.
-- Component = header `component X;`, else the first folder under the root.
+- Component = header `component X;`, else the first folder under the root. The `-- Component:` comment
+  isn't read: it goes stale (issue #20).
 - `.views` / `.storage` are parsed for definitions and reads; `.entity` only for the view and
   table names; `.cre` / `.cdb` only for tables their PL/SQL blocks create. Not parsed yet:
   the rest of `.entity`, `.enumeration`, `.utility`, `.upg`.
