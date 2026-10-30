@@ -318,7 +318,7 @@ fn split_word(s: &str) -> (&str, &str) {
 /// Blanks `/* ... */` comments (which may span lines) outside double-quoted strings,
 /// keeping newlines so line numbers stay right. A `//` or `--` line comment hides any
 /// `/*` after it on that line.
-fn blank_block_comments(text: &str) -> String {
+pub(crate) fn blank_block_comments(text: &str) -> String {
     if !text.contains("/*") {
         return text.to_string();
     }

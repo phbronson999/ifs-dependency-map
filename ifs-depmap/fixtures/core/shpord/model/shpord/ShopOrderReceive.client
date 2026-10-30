@@ -1,0 +1,31 @@
+client ShopOrderReceive;
+component SHPORD;
+layer Core;
+projection ShopOrderHandling;
+
+-------------------------------- ASSISTANTS ---------------------------------
+-- An apostrophe in a Marble string must not carry the assistant on into the
+-- group after it (issue #22).
+assistant ReceiveAssistant using ShopOrderSet {
+   label = "Receive Order";
+   steps {
+      step {
+         group ReceiveGroup;
+      }
+   }
+   finish command {
+      execute {
+         confirm("Receive the order's lines?") {
+            when CANCEL {
+               exit CANCEL;
+            }
+         }
+      }
+   }
+}
+
+---------------------------------- GROUPS -----------------------------------
+group ReceiveGroup for ShopOrder {
+   field OrderNo;
+   field PartNo;
+}

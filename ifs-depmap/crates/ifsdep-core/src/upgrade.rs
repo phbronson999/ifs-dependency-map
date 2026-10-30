@@ -13,6 +13,7 @@
 
 use crate::db;
 use crate::entity;
+use crate::marble;
 use crate::model::*;
 use crate::plsql;
 use crate::sqlscope;
@@ -500,12 +501,16 @@ fn decl_span(text: &str, file_kind: FileKind, kind: &str, name: &str, nth: usize
             .unwrap_or(ls.len() - 1);
         return Some((start, end));
     }
-    // Marble: a braced body, or up to the `;` when there is none.
-    let cleaned = plsql::blank_comments_and_strings(&ls[start..].join("\n"));
+    // Marble: a braced body, or up to the `;` when there is none. Marble strings are
+    // double-quoted, so an apostrophe in one (`"the order's lines"`) starts nothing (issue #22).
+    let cleaned = marble::blank_block_comments(&ls[start..].join("\n"));
     let mut depth = 0;
     for (k, l) in cleaned.lines().enumerate() {
-        for c in l.chars() {
+        let mut in_str = false;
+        for c in marble::strip_comment(l).chars() {
             match c {
+                '"' => in_str = !in_str,
+                _ if in_str => {}
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;
@@ -650,5 +655,16 @@ mod tests {
         assert_eq!(d2.iter().find(|l| l.text.contains("END IF")).unwrap().in_cust, Some(false));
         // Non-ASCII text next to where a name would be is skipped, not sliced through.
         assert_eq!(decl_span("list Or‑ders for X;\nlist OrdersList;\n", FileKind::Client, "list", "OrdersList", 0), Some((1, 1)));
+    }
+
+    #[test]
+    fn a_marble_declaration_ends_at_its_own_brace() {
+        // An apostrophe in a double-quoted string and a brace in a `//` comment don't
+        // carry the assistant on into the group after it (issue #22).
+        let client = "assistant A using S {\n   finish command {\n      execute {\n         confirm(\"Drop the order's lines?\") {\n            when CANCEL {\n               exit;\n            }\n         }\n      }\n   }\n   // command Old {\n}\ngroup G for X {\n   field F;\n}\n";
+        assert_eq!(decl_span(client, FileKind::Client, "assistant", "A", 0), Some((0, 11)));
+        assert_eq!(decl_span(client, FileKind::Client, "group", "G", 0), Some((12, 14)));
+        // A brace in a string isn't counted either.
+        assert_eq!(decl_span("group G for X {\n   label = \"{\";\n}\n", FileKind::Client, "group", "G", 0), Some((0, 2)));
     }
 }

@@ -1,0 +1,24 @@
+client ShopOrderReceive;
+component SHPORD;
+layer Cust;
+projection ShopOrderHandling;
+
+-- A copy of the previous Core's assistant, with its own finish check.
+@Overtake
+assistant ReceiveAssistant using ShopOrderSet {
+   label = "Receive";
+   steps {
+      step {
+         group ReceiveGroup;
+      }
+   }
+   finish command {
+      execute {
+         confirm("Receive the order's lines? Check the site first.") {
+            when CANCEL {
+               exit CANCEL;
+            }
+         }
+      }
+   }
+}

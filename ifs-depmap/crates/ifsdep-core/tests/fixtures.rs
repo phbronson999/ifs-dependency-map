@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 49);
+    assert_eq!(idx.stats.files, 51);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -549,6 +549,7 @@ fn upgrade_comparison_says_what_changed_under_each_customization() {
         got,
         [
             ("ENTITY_CHANGED".to_string(), Severity::Info, "ShopOrder changed under your -Cust.entity".to_string()),
+            ("BASE_CHANGED".to_string(), Severity::Warning, "assistant ReceiveAssistant in ShopOrderReceive.client changed under your @Overtake".to_string()),
             ("BASE_CHANGED".to_string(), Severity::Info, "group ShopOrderGroup in ShopOrder.client changed under your @Override".to_string()),
             ("BASE_CHANGED".to_string(), Severity::Info, "procedure Check_Insert___ in ShopOrder.plsql changed under your @Override".to_string()),
             ("BASE_CHANGED".to_string(), Severity::Info, "procedure Insert___ in ShopOrder.plsql changed under your @Override".to_string()),
@@ -578,6 +579,15 @@ fn upgrade_comparison_says_what_changed_under_each_customization() {
     let group_line = client.lines().position(|l| l.starts_with("group ShopOrderGroup")).unwrap() + 1;
     assert_eq!(g.new_line, group_line);
     assert!(g.lines.iter().any(|l| l.op == "+" && l.text.contains("\"General\"")));
+    // The overtaken assistant's diff stops at its own closing brace, even past an apostrophe
+    // in a string: the group it only references changed too, but isn't part of it (issue #22).
+    let a = by_title("assistant ReceiveAssistant");
+    let d = a.diff.as_ref().unwrap();
+    assert!(d.lines.iter().any(|l| l.op == "+" && l.text.contains("\"Receive Order\"")), "{:?}", d.lines);
+    assert!(d.lines.iter().all(|l| !l.text.contains("PartNo") && !l.text.starts_with("group ReceiveGroup for")), "{:?}", d.lines);
+    assert_eq!(d.cust_code.last().map(String::as_str), Some("}"));
+    assert!(d.cust_code.iter().all(|l| !l.starts_with("group ")));
+    assert!(a.message.contains("Your copy has 0 of the 1 line IFS added"), "{}", a.message);
     // The entity lost an attribute.
     let e = by_title("ShopOrder changed under");
     assert!(e.message.contains("Removed: OrderStatus"), "{}", e.message);
