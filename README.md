@@ -40,7 +40,7 @@ No Rust or Node is needed. The `.msi` there does the same for managed installs.
 | `DUPLICATE_DEFINITION` | error | The same construct (structure, entity, function…) reaches one client/projection from two different units. |
 | `MISSING_OVERRIDE` | error | A `-Cust` file redeclares a Core construct without `@Override`. |
 | `CONNECTION_MISSING` | warning | A cross-component include or `Xxx_API` call to a component that deploy.ini doesn't connect, directly or through a chain of STATIC connections (those are always installed together). |
-| `DYNAMIC_NOT_GUARDED` | warning | A DYNAMIC connection used without `@DynamicComponentDependency` or a `$IF Component_X_SYS.INSTALLED` guard. |
+| `DYNAMIC_NOT_GUARDED` | warning | A DYNAMIC connection used without `@DynamicComponentDependency` or a `$IF Component_X_SYS.INSTALLED` guard, for that component or one that needs it STATIC. |
 | `LAYER_MISMATCH` | warning | `layer Cust;` in the Core folder, or `layer Core;` in the Cust folder. |
 | `OVERRIDE_NO_BASE` | warning / info | `@Override`/`@Overtake` with nothing to layer over (info for projection entities, whose base may be an LU `.entity`). |
 | `UNRESOLVED_INCLUDE` / `UNRESOLVED_PROJECTION` | warning | Name not found in either folder. |

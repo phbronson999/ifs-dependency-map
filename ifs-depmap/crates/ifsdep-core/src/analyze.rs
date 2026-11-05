@@ -665,6 +665,9 @@ fn connections(idx: &Index, out: &mut Vec<Finding>) {
             .map(|d| d.rel_path.clone())
             .unwrap_or_else(|| format!("{}/deploy.ini ({:?} folder)", src.to_ascii_lowercase(), file.root));
         let conn = comp.connections.iter().find(|c| c.target == tgt);
+        // A guard for a component that needs the target STATIC covers the target too: that
+        // component can't be installed without it (issue #24).
+        let guarded = e.dynamic.iter().chain(&e.guards).any(|g| g == tgt || reaches(g, tgt));
         let what = match e.kind {
             EdgeKind::Include => format!("includes fragment {}", target_unit.name),
             _ => format!("calls {} ({})", target_unit.name, e.detail.clone().unwrap_or_default()),
@@ -694,7 +697,7 @@ fn connections(idx: &Index, out: &mut Vec<Finding>) {
                 });
                 out.push(f);
             }
-            Some(c) if c.kind == "DYNAMIC" && e.dynamic.as_deref() != Some(tgt) && !e.guards.iter().any(|g| g == tgt) => {
+            Some(c) if c.kind == "DYNAMIC" && !guarded => {
                 if !seen.insert((e.file, tgt.to_string(), "dynamic")) {
                     continue;
                 }
@@ -718,7 +721,7 @@ fn connections(idx: &Index, out: &mut Vec<Finding>) {
                     "DYNAMIC_NOT_GUARDED",
                     format!("Optional component {tgt} used without a guard"),
                     format!(
-                        "{} {what}. {tgt} is a DYNAMIC connection of {src}, so the usage needs @DynamicComponentDependency or a Component_{}_SYS.INSTALLED check.",
+                        "{} {what}. {tgt} is a DYNAMIC connection of {src}, so the usage needs @DynamicComponentDependency or a Component_{}_SYS.INSTALLED check, for {tgt} or for a component that needs {tgt} STATIC.",
                         file.rel_path,
                         cap(tgt)
                     ),

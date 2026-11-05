@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 53);
+    assert_eq!(idx.stats.files, 54);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -300,8 +300,16 @@ fn deploy_ini_connections() {
     assert!(!missing.iter().any(|t| t.starts_with("QUAMAN")), "{missing:?}");
 
     // Guarded uses of the DYNAMIC Proj connection are fine; the unguarded Cust call is not.
+    // TIPROJ's QUAMAN guard covers INVENT, which QUAMAN needs STATIC; its PROJ guard doesn't
+    // (issue #24).
     let dynamic = findings(&idx, "DYNAMIC_NOT_GUARDED");
-    assert_eq!(dynamic.len(), 1);
+    let at: Vec<String> = dynamic
+        .iter()
+        .map(|f| f.location.as_ref().unwrap())
+        .map(|l| format!("{}:{}", idx.files[l.file].rel_path.rsplit('/').next().unwrap(), l.line))
+        .collect();
+    assert_eq!(at, ["ShopOrder-Cust.plsql:14", "TiProjectCheck-Cust.plsql:48"], "{at:?}");
+    assert!(dynamic[1].title.contains("INVENT"));
     let loc = dynamic[0].location.as_ref().unwrap();
     assert_eq!(idx.files[loc.file].root, Layer::Cust);
     assert!(dynamic[0].suggestion.as_ref().unwrap().snippet.as_ref().unwrap().contains("Component_Proj_SYS.INSTALLED"));
@@ -341,7 +349,7 @@ fn unresolved_include() {
 #[test]
 fn total_findings_are_exactly_the_planted_ones() {
     let idx = fixtures();
-    assert_eq!(idx.findings.len(), 18);
+    assert_eq!(idx.findings.len(), 19);
 }
 
 #[test]

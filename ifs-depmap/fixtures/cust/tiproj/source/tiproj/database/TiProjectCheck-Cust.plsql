@@ -37,3 +37,16 @@ IS
 BEGIN
    RETURN Project_API.Get_Name(project_id_);
 END Get_Project_Name;
+
+-- PROJ doesn't need INVENT, so this call isn't guarded (issue #24).
+FUNCTION Get_Project_Part_Description (
+   contract_ IN VARCHAR2,
+   part_no_  IN VARCHAR2 ) RETURN VARCHAR2
+IS
+BEGIN
+   $IF Component_Proj_SYS.INSTALLED $THEN
+      RETURN Inventory_Part_API.Get_Description(contract_, part_no_);
+   $ELSE
+      RETURN NULL;
+   $END
+END Get_Project_Part_Description;
