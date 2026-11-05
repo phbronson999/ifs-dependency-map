@@ -358,3 +358,4 @@ add new ones there. At the time of writing:
 - [#8](https://github.com/phbronson999/ifs-dependency-map/issues/8) `lov X with ReferenceYSelector` links
 - [#9](https://github.com/phbronson999/ifs-dependency-map/issues/9) persisted index with incremental rescans
 - [#10](https://github.com/phbronson999/ifs-dependency-map/issues/10) more places for DATATYPE_MISMATCH to list
+- [#25](https://github.com/phbronson999/ifs-dependency-map/issues/25) `OR` and `NOT` in `$IF` guards for DYNAMIC_NOT_GUARDED
