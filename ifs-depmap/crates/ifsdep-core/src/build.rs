@@ -376,6 +376,7 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
         line,
         layer,
         dynamic: None,
+        guards: Vec::new(),
         count: 1,
         detail: None,
     };
@@ -427,26 +428,40 @@ pub fn try_index(opts: &IndexOptions) -> Result<Index, Cancelled> {
                 }
             }
             Parsed::Plsql(p) => {
-                // Aggregate calls per (target package, effective guard).
-                let mut agg: BTreeMap<(usize, Option<String>), (usize, usize, Vec<String>)> = BTreeMap::new();
+                // Aggregate calls per (target package, effective guard). The edge keeps the guards
+                // every one of its calls has.
+                type Calls = (usize, usize, Vec<String>, Vec<String>);
+                let mut agg: BTreeMap<(usize, Option<String>), Calls> = BTreeMap::new();
                 for c in p.calls.iter().filter(|c| !c.package.is_empty()) {
                     let Some(t) = lookup(UnitKind::Package, c.package.clone()) else { continue };
                     if t == ui {
                         continue;
                     }
-                    let guard = c
-                        .guard
-                        .clone()
-                        .or_else(|| c.in_method.and_then(|m| p.methods[m].dynamic.clone()));
-                    let entry = agg.entry((t, guard)).or_insert((0, c.line, Vec::new()));
+                    let mut all = c.guards.clone();
+                    for d in c.in_method.iter().flat_map(|&m| &p.methods[m].dynamic_all) {
+                        if !all.contains(d) {
+                            all.push(d.clone());
+                        }
+                    }
+                    // The target's own component when a guard names it, else as before: the
+                    // nearest `$IF`'s first component, else the method's annotation.
+                    let tgt = &idx.units[t].component;
+                    let guard = if all.contains(tgt) {
+                        Some(tgt.clone())
+                    } else {
+                        c.guard.clone().or_else(|| c.in_method.and_then(|m| p.methods[m].dynamic.clone()))
+                    };
+                    let entry = agg.entry((t, guard)).or_insert_with(|| (0, c.line, Vec::new(), all.clone()));
+                    entry.3.retain(|g| all.contains(g));
                     entry.0 += 1;
                     if !entry.2.contains(&c.method) {
                         entry.2.push(c.method.clone());
                     }
                 }
-                for ((t, guard), (count, line, methods)) in agg {
+                for ((t, guard), (count, line, methods, all)) in agg {
                     let mut e = edge(from.clone(), idx.units[t].id.clone(), EdgeKind::Calls, fi, line, layer);
                     e.dynamic = guard;
+                    e.guards = all;
                     e.count = count;
                     let shown: Vec<_> = methods.iter().take(8).cloned().collect();
                     e.detail = Some(if methods.len() > 8 {

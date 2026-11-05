@@ -14,6 +14,8 @@ pub struct Method {
     pub line: usize,
     pub modifier: Option<String>,
     pub dynamic: Option<String>,
+    /// Every `@DynamicComponentDependency` above the method; `dynamic` is the last one.
+    pub dynamic_all: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +27,9 @@ pub struct Call {
     pub in_method: Option<usize>,
     /// Component of the nearest enclosing `$IF Component_X_SYS.INSTALLED` guard.
     pub guard: Option<String>,
+    /// Every component the enclosing `$IF`s guarantee, nearest first: all of an AND
+    /// (`$IF Component_A_SYS.INSTALLED AND Component_B_SYS.INSTALLED`), and the outer `$IF`s too.
+    pub guards: Vec<String>,
 }
 
 /// A table or view read or written in SQL (`FROM x`, `JOIN x`, `UPDATE x`, `INSERT INTO x`).
@@ -175,6 +180,43 @@ fn guard_component(line: &str) -> Option<String> {
     None
 }
 
+/// Every component a `$IF` / `$ELSIF` condition guarantees. All of them when the condition only
+/// ANDs `Component_X_SYS.INSTALLED` checks (issue #23); with an OR or NOT in it, the first one,
+/// as `guard_component` reads it (issue #25).
+fn guard_components(cond: &str) -> Vec<String> {
+    let lower = cond.to_ascii_lowercase();
+    if lower.split(|c: char| !is_ident(c)).any(|w| w == "or" || w == "not") {
+        return guard_component(cond).into_iter().collect();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut from = 0;
+    while let Some(p) = lower[from..].find("component_") {
+        let start = from + p + "component_".len();
+        let (word, end) = ident_at(&lower, start);
+        from = start;
+        let Some(comp) = word.strip_suffix("_sys") else { continue };
+        let dot = skip_ws(&lower, end);
+        if lower[dot..].starts_with('.') && lower[skip_ws(&lower, dot + 1)..].starts_with("installed") {
+            let comp = comp.to_ascii_uppercase();
+            if !out.contains(&comp) {
+                out.push(comp);
+            }
+        }
+    }
+    out
+}
+
+/// The components every open `$IF` guarantees, nearest first.
+fn in_guards(sets: &[Vec<String>]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in sets.iter().rev().flatten() {
+        if !out.contains(c) {
+            out.push(c.clone());
+        }
+    }
+    out
+}
+
 pub fn parse(text: &str) -> ParsedPlsql {
     let mut out = ParsedPlsql::default();
 
@@ -202,7 +244,12 @@ pub fn parse(text: &str) -> ParsedPlsql {
     let cleaned = blank_comments_and_strings(text);
     let mut pending_modifier: Option<String> = None;
     let mut pending_dynamic: Option<String> = None;
+    let mut pending_dynamic_all: Vec<String> = Vec::new();
     let mut guards: Vec<Option<String>> = Vec::new();
+    // What each open `$IF` guarantees in its current branch, and a condition read so far that
+    // hasn't reached its `$THEN` (it can run over several lines).
+    let mut guard_sets: Vec<Vec<String>> = Vec::new();
+    let mut open_cond: Option<String> = None;
     let mut current: Option<usize> = None;
     // Cursors in scope, upper-cased: the package's own and the current method's. A cursor
     // named like a method of the package (`CURSOR release_order` beside `Release_Order`)
@@ -220,7 +267,8 @@ pub fn parse(text: &str) -> ParsedPlsql {
             match parts.next().unwrap_or("") {
                 "Override" | "Overtake" => pending_modifier = Some(a.split_whitespace().next().unwrap().to_string()),
                 "DynamicComponentDependency" => {
-                    pending_dynamic = parts.next().map(|s| s.trim_end_matches(';').to_ascii_uppercase())
+                    pending_dynamic = parts.next().map(|s| s.trim_end_matches(';').to_ascii_uppercase());
+                    pending_dynamic_all.extend(pending_dynamic.clone());
                 }
                 _ => {}
             }
@@ -229,9 +277,26 @@ pub fn parse(text: &str) -> ParsedPlsql {
         let tl = t.to_ascii_lowercase();
         if tl.starts_with("$if") {
             guards.push(guard_component(t));
+            guard_sets.push(Vec::new());
         } else if tl.starts_with("$else") || tl.starts_with("$elsif") {
             if let Some(top) = guards.last_mut() {
                 *top = None;
+            }
+            if let Some(top) = guard_sets.last_mut() {
+                top.clear();
+            }
+        }
+        if tl.starts_with("$if") || tl.starts_with("$elsif") {
+            open_cond = Some(String::new());
+        }
+        if let Some(cond) = open_cond.as_mut() {
+            cond.push(' ');
+            cond.push_str(t);
+            if tl.contains("$then") {
+                if let Some(top) = guard_sets.last_mut() {
+                    *top = guard_components(cond);
+                }
+                open_cond = None;
             }
         }
         if let Some((kind, name)) = decl_at_col0(line) {
@@ -241,6 +306,7 @@ pub fn parse(text: &str) -> ParsedPlsql {
                 line: line_no,
                 modifier: pending_modifier.take(),
                 dynamic: pending_dynamic.take(),
+                dynamic_all: std::mem::take(&mut pending_dynamic_all),
             });
             current = Some(out.methods.len() - 1);
             method_cursors.clear();
@@ -269,6 +335,7 @@ pub fn parse(text: &str) -> ParsedPlsql {
                 line: line_no,
                 in_method: current,
                 guard: guards.iter().rev().find_map(|g| g.clone()),
+                guards: in_guards(&guard_sets),
             });
         }
         for (package, method) in calls_in(line) {
@@ -278,10 +345,12 @@ pub fn parse(text: &str) -> ParsedPlsql {
                 line: line_no,
                 in_method: current,
                 guard: guards.iter().rev().find_map(|g| g.clone()),
+                guards: in_guards(&guard_sets),
             });
         }
         if tl.starts_with("$end") {
             guards.pop();
+            guard_sets.pop();
         }
     }
     out.reads = relations_in(&cleaned, &out.methods);
@@ -692,6 +761,70 @@ END Get_Project_Name;
         let local = parse("PROCEDURE A__ IS\nBEGIN\n   Check_Insert___(rec_);\n   x_ := Get_Name(id_);\n   Do_It;\nEND A__;\n");
         let names: Vec<_> = local.calls.iter().map(|c| c.method.as_str()).collect();
         assert_eq!(names, ["Check_Insert___", "Get_Name", "Do_It"]);
+    }
+
+    #[test]
+    fn guards_hold_every_component_the_ifs_around_a_call_guarantee() {
+        // Issue #23: all of an AND, outer $IFs, a $ELSIF, a condition over two lines, and every
+        // annotation on a method. OR and NOT keep the first component only, as before (#25).
+        let src = r#"
+PROCEDURE A IS
+BEGIN
+   $IF Component_Tietex_SYS.INSTALLED AND Component_Shpord_SYS.INSTALLED $THEN
+      Dispatch_List_Filter_API.Exists(x_);
+   $END
+   $IF (Component_Proj_SYS.INSTALLED) AND (Component_Order_SYS.INSTALLED) $THEN
+      $IF Component_Loc_SYS.INSTALLED $THEN
+         Request_Address_API.New(x_);
+      $ELSE
+         Customer_Order_API.Get(x_);
+      $END
+   $END
+   $IF Component_Taxled_SYS.INSTALLED $THEN
+      Tax_Book_API.Get(x_);
+   $ELSIF Component_Invoic_SYS.INSTALLED $THEN
+      Invoice_API.Get(x_);
+   $ELSE
+      Company_API.Get(x_);
+   $END
+   $IF Component_Purch_SYS.INSTALLED AND
+       Component_Supsch_SYS.INSTALLED $THEN
+      Supplier_Scheduler_API.Create(x_);
+   $END
+   $IF Component_Crm_SYS.INSTALLED OR Component_Srm_SYS.INSTALLED $THEN
+      Business_Mail_API.Get(x_);
+   $END
+   $IF NOT Component_Mfgstd_SYS.INSTALLED $THEN
+      Work_Center_API.Get(x_);
+   $END
+END A;
+
+@DynamicComponentDependency PURCH
+@DynamicComponentDependency INVENT
+FUNCTION B RETURN VARCHAR2 IS
+BEGIN
+   RETURN Purchase_Part_API.Get(x_);
+END B;
+"#;
+        let p = parse(src);
+        let guards: Vec<_> = p.calls.iter().filter(|c| !c.package.is_empty()).map(|c| (c.package.as_str(), c.guards.join(" "))).collect();
+        assert_eq!(
+            guards,
+            vec![
+                ("DISPATCH_LIST_FILTER_API", "TIETEX SHPORD".into()),
+                ("REQUEST_ADDRESS_API", "LOC PROJ ORDER".into()),
+                ("CUSTOMER_ORDER_API", "PROJ ORDER".into()),
+                ("TAX_BOOK_API", "TAXLED".into()),
+                ("INVOICE_API", "INVOIC".into()),
+                ("COMPANY_API", "".into()),
+                ("SUPPLIER_SCHEDULER_API", "PURCH SUPSCH".into()),
+                ("BUSINESS_MAIL_API", "CRM".into()),
+                ("WORK_CENTER_API", "MFGSTD".into()),
+                ("PURCHASE_PART_API", "".into()),
+            ]
+        );
+        assert_eq!(p.methods[1].dynamic.as_deref(), Some("INVENT"));
+        assert_eq!(p.methods[1].dynamic_all, ["PURCH", "INVENT"]);
     }
 
     #[test]

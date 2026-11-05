@@ -44,7 +44,7 @@ fn object_in<'a>(idx: &'a Index, layer: Layer, unit: &str, name: &str) -> &'a Ob
 #[test]
 fn indexes_everything() {
     let idx = fixtures();
-    assert_eq!(idx.stats.files, 51);
+    assert_eq!(idx.stats.files, 53);
     let shpord = idx.components.iter().find(|c| c.name == "SHPORD").unwrap();
     assert_eq!(shpord.description.as_deref(), Some("Shop Order"));
     assert!(idx.notes.is_empty(), "{:?}", idx.notes);
@@ -305,6 +305,18 @@ fn deploy_ini_connections() {
     let loc = dynamic[0].location.as_ref().unwrap();
     assert_eq!(idx.files[loc.file].root, Layer::Cust);
     assert!(dynamic[0].suggestion.as_ref().unwrap().snippet.as_ref().unwrap().contains("Component_Proj_SYS.INSTALLED"));
+
+    // TIPROJ's Project_API calls are all guarded for PROJ, though PROJ is never the first or
+    // only component of the nearest $IF or annotation (issue #23).
+    let tiproj: Vec<_> = idx
+        .edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Calls && idx.files[e.file].component == "TIPROJ")
+        .filter(|e| idx.units.iter().any(|u| u.id == e.to && u.component == "PROJ"))
+        .collect();
+    assert_eq!(tiproj.len(), 1, "{tiproj:?}");
+    assert_eq!(tiproj[0].dynamic.as_deref(), Some("PROJ"));
+    assert_eq!(tiproj[0].count, 5);
 }
 
 #[test]

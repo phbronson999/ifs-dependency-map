@@ -182,6 +182,9 @@ pub struct Edge {
     pub layer: Layer,
     /// Component named by `@DynamicComponentDependency` or a `$IF Component_X_SYS.INSTALLED` guard.
     pub dynamic: Option<String>,
+    /// The components the guards and annotations around every PL/SQL call on the edge guarantee
+    /// (issue #23). `dynamic` is the one shown: the target's own component when it's here.
+    pub guards: Vec<String>,
     pub count: usize,
     pub detail: Option<String>,
 }

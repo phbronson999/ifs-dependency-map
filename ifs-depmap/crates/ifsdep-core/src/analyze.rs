@@ -694,7 +694,7 @@ fn connections(idx: &Index, out: &mut Vec<Finding>) {
                 });
                 out.push(f);
             }
-            Some(c) if c.kind == "DYNAMIC" && e.dynamic.as_deref() != Some(tgt) => {
+            Some(c) if c.kind == "DYNAMIC" && e.dynamic.as_deref() != Some(tgt) && !e.guards.iter().any(|g| g == tgt) => {
                 if !seen.insert((e.file, tgt.to_string(), "dynamic")) {
                     continue;
                 }
